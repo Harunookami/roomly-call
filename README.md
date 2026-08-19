@@ -110,3 +110,119 @@ src
 │
 ├── App.tsx
 └── main.tsx
+
+# ⚙️ Como executar o projeto
+
+## Pré-requisitos
+
+Antes de iniciar, tenha instalado:
+
+- Node.js
+- npm ou yarn
+
+---
+
+## Instalação
+
+Clone o repositório:
+
+```bash
+git clone https://github.com/seu-usuario/roomly-call.git
+```
+
+Entre na pasta do projeto:
+
+```bash
+cd roomly-call
+```
+
+Instale as dependências:
+
+```bash
+npm install
+```
+
+Execute o projeto:
+
+```bash
+npm run dev
+```
+
+A aplicação estará disponível em:
+
+```bash
+http://localhost:5173
+```
+
+---
+
+# 🧠 Conceitos estudados neste projeto
+
+Durante o desenvolvimento serão explorados:
+
+## React
+
+- Componentização;
+- Props;
+- Estados;
+- Hooks;
+- Renderização condicional;
+- Organização de componentes.
+
+## TypeScript
+
+- Tipagem de componentes;
+- Interfaces;
+- Tipos personalizados;
+- Segurança durante desenvolvimento.
+
+## Comunicação em tempo real
+
+- WebSocket;
+- Socket.IO;
+- Eventos cliente-servidor;
+- Comunicação entre usuários.
+
+## WebRTC
+
+- Peer Connection;
+- MediaStream;
+- Compartilhamento de tela;
+- Transmissão de áudio/vídeo.
+
+---
+
+# 🏗️ Arquitetura planejada
+
+```text
+                 Frontend
+                    |
+              React + TS
+                    |
+              Socket.IO
+                    |
+                 Backend
+                    |
+                 WebRTC
+                    |
+          Comunicação entre usuários
+```
+
+---
+
+# 📌 Próximos passos
+
+- [ ] Implementar criação de salas;
+- [ ] Adicionar conexão entre usuários;
+- [ ] Integrar WebRTC;
+- [ ] Implementar compartilhamento de tela;
+- [ ] Melhorar experiência do usuário;
+- [ ] Criar deploy da aplicação.
+
+---
+
+# 👩‍💻 Desenvolvido por
+
+**Rafaela Chagas**
+
+Projeto criado para estudo e evolução em desenvolvimento de aplicações modernas utilizando React, TypeScript e tecnologias de comunicação em tempo real.
