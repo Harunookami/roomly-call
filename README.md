@@ -111,6 +111,8 @@ src
 ├── App.tsx
 └── main.tsx
 
+---
+
 # ⚙️ Como executar o projeto
 
 ## Pré-requisitos
