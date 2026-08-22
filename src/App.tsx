@@ -1,9 +1,7 @@
-const App = () => {
-  return (
-    <div className="min-h-screen bg-[#080d18] text-white">
-      Roommly
-    </div>
-  )
+import { AppRoutes } from "./routes";
+
+function App() {
+  return <AppRoutes />;
 }
 
-export default App
+export default App;
