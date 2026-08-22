@@ -17,6 +17,9 @@ function HomePage() {
     };
 
     const handleCriarSala = () => {
+        if (!nome) {
+            return;
+        }
         const codigo = Math.random()
             .toString(36)
             .substring(2, 8)
