@@ -1,4 +1,29 @@
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+
 function HomePage() {
+    const [nome, setNome] = useState("");
+    const [modoEntrar, setModoEntrar] = useState(false);
+    const [codigoSala, setCodigoSala] = useState("");
+
+    const navigate = useNavigate();
+
+    const handleEntrarSala = () => {
+        if (!nome || !codigoSala) {
+            return;
+        }
+
+        navigate(`/room/${codigoSala}`);
+    };
+
+    const handleCriarSala = () => {
+        const codigo = Math.random()
+            .toString(36)
+            .substring(2, 8)
+            .toUpperCase();
+
+        navigate(`/room/${codigo}`);
+    };
 
     return (
         <main
@@ -21,23 +46,26 @@ function HomePage() {
 
             <input
                 className="
-         w-100
-        h-12
-        rounded-lg
-       bg-[#080d18]
-        border
-        border-slate-600
-        px-4
-        text-white
-        outline-none
-        focus:ring-2
-        focus:ring-blue-500
-            "
+          w-100
+          h-12
+          rounded-lg
+          bg-[#080d18]
+          border
+          border-slate-600
+          px-4
+          text-white
+          outline-none
+          focus:ring-2
+          focus:ring-blue-500
+        "
                 placeholder="Digite seu nome"
+                value={nome}
+                onChange={(event) => setNome(event.target.value)}
             />
 
-            <button
-                className="
+            {!modoEntrar && (
+                <button
+                    className="
             rounded-lg
             bg-blue-500
             hover:bg-blue-600
@@ -47,26 +75,88 @@ function HomePage() {
             py-2
             cursor-pointer
             w-100
-            transition-colors duration-300
-            "
-            >
-                Criar sala
-            </button>
+            transition-colors
+            duration-300
+          "
+                    onClick={handleCriarSala}
+                >
+                    Criar sala
+                </button>
+            )}
 
-            <button
-                className="
-          rounded-lg
-        bg-[#080d18]
-         hover:bg-slate-800
-          px-9
-          py-2
-          cursor-pointer
-          w-100
-         transition-colors duration-300
-        "
-            >
-                Entrar em uma sala
-            </button>
+            {!modoEntrar ? (
+                <button
+                    className="
+            rounded-lg
+            bg-[#080d18]
+            hover:bg-slate-800
+            px-9
+            py-2
+            cursor-pointer
+            w-100
+            transition-colors
+            duration-300
+          "
+                    onClick={() => setModoEntrar(true)}
+                >
+                    Entrar em uma sala
+                </button>
+            ) : (
+                <>
+                    <input
+                        className="
+              w-100
+              h-12
+              rounded-lg
+              bg-[#080d18]
+              border
+              border-slate-600
+              px-4
+              text-white
+              outline-none
+              focus:ring-2
+              focus:ring-blue-500
+            "
+                        placeholder="Código da sala"
+                        value={codigoSala}
+                        onChange={(event) => setCodigoSala(event.target.value)}
+                    />
+
+                    <button
+                        className="
+              rounded-lg
+              bg-blue-500
+              hover:bg-blue-600
+              px-9
+              py-2
+              cursor-pointer
+              w-100
+              transition-colors
+              duration-300
+            "
+                        onClick={handleEntrarSala}
+                    >
+                        Entrar
+                    </button>
+
+                    <button
+                        className="
+              rounded-lg
+              bg-[#080d18]
+              hover:bg-slate-800
+              px-9
+              py-2
+              cursor-pointer
+              w-100
+              transition-colors
+              duration-300
+            "
+                        onClick={() => setModoEntrar(false)}
+                    >
+                        Voltar
+                    </button>
+                </>
+            )}
         </main>
     );
 }
