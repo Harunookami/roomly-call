@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import HomePage from "../pages/HomePage";
+import RoomPage from "../pages/RoomPage";
 
 export function AppRoutes() {
   return (
@@ -10,6 +11,10 @@ export function AppRoutes() {
           path="/"
           element={<HomePage />}
         />
+        <Route
+          path="/room/:id"
+          element={<RoomPage />}
+           />
       </Routes>
     </BrowserRouter>
   );
