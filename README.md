@@ -36,26 +36,15 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 
 # ✨ Funcionalidades
 
-## Atualmente
-
-- [x] Interface inicial para criação/entrada em salas;
-- [x] Tela da sala de chamada;
-- [x] Lista de participantes;
-- [x] Controles visuais de chamada;
-- [x] Layout responsivo;
-- [x] Design inspirado em aplicações modernas de comunicação.
-
-## Em desenvolvimento
-
-- [ ] Criação real de salas;
-- [ ] Sistema de entrada por código;
-- [ ] Comunicação via WebSocket;
-- [ ] Chamadas utilizando WebRTC;
-- [ ] Compartilhamento de tela;
-- [ ] Controle de microfone;
-- [ ] Controle de câmera;
-- [ ] Reconexão automática;
-- [ ] Servidor STUN/TURN.
+- [x] Criação de salas privadas com código gerado pelo servidor;
+- [x] Entrada por código ou link, até 8 pessoas por sala;
+- [x] Chamadas de áudio e vídeo com WebRTC;
+- [x] Compartilhamento de tela, com áudio quando o navegador permite;
+- [x] Controle de microfone e câmera;
+- [x] Lista de participantes, com remoção feita pelo anfitrião;
+- [x] Reconexão automática sem perder o lugar na sala;
+- [x] Suporte a STUN/TURN por configuração;
+- [x] Layout responsivo.
 
 ---
 
@@ -70,10 +59,10 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 - React Router
 - Lucide React
 
-## Backend (planejado)
+## Backend
 
 - Node.js
-- Express/Fastify
+- Express
 - Socket.IO
 
 ## Comunicação em tempo real
@@ -87,26 +76,38 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 # 📂 Estrutura do projeto
 
 ```bash
+server
+├── app.ts          # Rotas HTTP e eventos do Socket.IO
+├── rooms.ts        # Regras das salas e dos participantes
+├── index.ts        # Configuração e inicialização
+└── app.test.ts
+
 src
-│
 ├── components
+│   ├── CallControls
 │   ├── Header
+│   ├── Media
 │   ├── Participants
-│   ├── ScreenShare
-│   └── CallControls
+│   └── ScreenShare
+│
+├── hooks
+│   └── useRoom.ts
 │
 ├── pages
-│   ├── Home
-│   └── Room
+│   ├── HomePage.tsx
+│   ├── NotFoundPage.tsx
+│   └── RoomPage.tsx
 │
 ├── routes
 │   └── index.tsx
 │
 ├── services
-│   ├── socket.ts
-│   └── webrtc.ts
+│   ├── roomClient.ts  # Ciclo de vida da chamada
+│   ├── socket.ts      # Conexão com o servidor
+│   ├── userName.ts
+│   └── webrtc.ts      # Conexões entre participantes
 │
-├── types
+├── types              # Tipos usados pelo cliente e pelo servidor
 │
 ├── App.tsx
 └── main.tsx
@@ -130,7 +131,7 @@ Antes de iniciar, tenha instalado:
 Clone o repositório:
 
 ```bash
-git clone https://github.com/seu-usuario/roomly-call.git
+git clone https://github.com/Harunookami/roomly-call.git
 ```
 
 Entre na pasta do projeto:
@@ -156,6 +157,31 @@ A aplicação estará disponível em:
 ```bash
 http://localhost:5173
 ```
+
+O comando inicia o frontend e o servidor (porta 3001) juntos.
+
+## Testes
+
+```bash
+npm test
+```
+
+---
+
+# 🚀 Deploy
+
+Em produção, um único processo Node serve a interface e o Socket.IO:
+
+```bash
+npm run build
+npm start
+```
+
+Também é possível usar o `Dockerfile`. As variáveis de ambiente estão em `.env.example`; defina-as no ambiente de hospedagem.
+
+- **HTTPS é obrigatório:** fora do `localhost`, o navegador só libera microfone, câmera e tela em HTTPS. Isso também vale para testes pela rede local.
+- **Configure um servidor TURN:** só com STUN, pessoas em redes restritivas (empresas, 4G) podem não conseguir se conectar.
+- **Rode uma única instância:** as salas ficam na memória do servidor e se perdem quando ele reinicia.
 
 ---
 
@@ -195,32 +221,16 @@ Durante o desenvolvimento serão explorados:
 
 ---
 
-# 🏗️ Arquitetura planejada
+# 🏗️ Arquitetura
 
 ```text
-                 Frontend
-                    |
-              React + TS
-                    |
-              Socket.IO
-                    |
-                 Backend
-                    |
-                 WebRTC
-                    |
-          Comunicação entre usuários
+  Navegador A  <----- áudio, vídeo e tela (WebRTC) ----->  Navegador B
+       |                                                        |
+       +------------ Socket.IO ---- Servidor ---- Socket.IO ----+
+                   (salas, participantes e sinalização)
 ```
 
----
-
-# 📌 Próximos passos
-
-- [ ] Implementar criação de salas;
-- [ ] Adicionar conexão entre usuários;
-- [ ] Integrar WebRTC;
-- [ ] Implementar compartilhamento de tela;
-- [ ] Melhorar experiência do usuário;
-- [ ] Criar deploy da aplicação.
+A mídia vai diretamente entre os navegadores, em malha: cada participante mantém uma conexão com cada um dos outros. O servidor só organiza as salas e repassa as mensagens que abrem essas conexões. Por isso as salas são limitadas a 8 pessoas.
 
 ---
 
