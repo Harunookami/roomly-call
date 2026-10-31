@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Volume2 } from "lucide-react";
 
 type HeaderProps = {
     codigoSala: string;
@@ -19,23 +19,19 @@ export function Header({ codigoSala }: HeaderProps) {
     };
 
     return (
-        <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-slate-800 px-4">
-            <h1 className="text-xl font-bold tracking-tight">Roomly</h1>
+        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-black/30 px-4">
+            <p className="flex min-w-0 items-center gap-2 font-semibold">
+                <Volume2 size={20} className="shrink-0 text-slate-400" />
+                <span className="truncate">Sala {codigoSala}</span>
+            </p>
 
             <button
-                className="flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 transition-colors duration-300 hover:bg-slate-800"
+                className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-blue-500 px-3 py-1.5 text-sm transition-colors duration-300 hover:bg-blue-600"
                 onClick={handleCopiarLink}
                 title="Copiar link da sala"
             >
-                <span className="truncate">Sala {codigoSala}</span>
-                {copiado ? (
-                    <Check size={16} className="shrink-0 text-green-400" />
-                ) : (
-                    <Copy size={16} className="shrink-0" />
-                )}
-                <span className="sr-only" aria-live="polite">
-                    {copiado ? "Link copiado" : ""}
-                </span>
+                {copiado ? <Check size={16} /> : <Copy size={16} />}
+                <span aria-live="polite">{copiado ? "Link copiado" : "Convidar"}</span>
             </button>
         </header>
     )

@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@theme {
+    --color-rail: #080d18;
+    --color-sidebar: #0f1522;
+    --color-stage: #151c2c;
+    --color-tile: #1f2840;
+    --color-speaking: #4ade80;
+}
+
 body { 
     margin: 0;
     font-family: Roboto, sans-serif;

@@ -1,5 +1,6 @@
 export type MediaState = {
   micOn: boolean;
+  deafened: boolean;
   cameraOn: boolean;
   screenStreamId: string | null;
 };

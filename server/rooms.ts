@@ -119,6 +119,7 @@ export class RoomStore {
         isHost: room.members.size === 0,
         connected: true,
         micOn: false,
+        deafened: false,
         cameraOn: false,
         screenStreamId: null,
       },
@@ -187,6 +188,7 @@ export class RoomStore {
     }
 
     member.participant.micOn = media?.micOn === true;
+    member.participant.deafened = media?.deafened === true;
     member.participant.cameraOn = media?.cameraOn === true;
     member.participant.screenStreamId =
       typeof media?.screenStreamId === "string" ? media.screenStreamId : null;

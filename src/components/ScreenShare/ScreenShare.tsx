@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import { Maximize } from "lucide-react";
 
 import { StreamVideo } from "../Media/StreamVideo";
-import { EmptyScreenShare } from "./EmptyScreenShare";
 
 export type SharedScreen = {
     participantId: string;
@@ -32,7 +31,7 @@ export function ScreenShare({ screens }: ScreenShareProps) {
                             className={`cursor-pointer rounded-lg px-3 py-1 text-sm transition-colors duration-300 ${
                                 screen === ativa
                                     ? "bg-blue-500"
-                                    : "bg-slate-800 hover:bg-slate-700"
+                                    : "bg-tile hover:bg-slate-700"
                             }`}
                             onClick={() => setSelecionadaId(screen.participantId)}
                         >
@@ -44,29 +43,24 @@ export function ScreenShare({ screens }: ScreenShareProps) {
 
             <div
                 ref={palcoRef}
-                className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-slate-800 bg-black"
+                data-stage
+                className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black"
             >
-                {ativa ? (
-                    <>
-                        <StreamVideo
-                            stream={ativa.stream}
-                            className="absolute inset-0 h-full w-full object-contain"
-                        />
-                        <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-sm">
-                            {ativa.label}
-                        </span>
-                        <button
-                            className="absolute right-2 bottom-2 cursor-pointer rounded bg-black/70 p-2 hover:bg-slate-800"
-                            onClick={() => palcoRef.current?.requestFullscreen()}
-                            title="Tela cheia"
-                            aria-label="Tela cheia"
-                        >
-                            <Maximize size={16} />
-                        </button>
-                    </>
-                ) : (
-                    <EmptyScreenShare />
-                )}
+                <StreamVideo
+                    stream={ativa.stream}
+                    className="absolute inset-0 h-full w-full object-contain"
+                />
+                <span className="absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-sm">
+                    {ativa.label}
+                </span>
+                <button
+                    className="absolute right-2 bottom-2 cursor-pointer rounded bg-black/70 p-2 hover:bg-slate-800"
+                    onClick={() => palcoRef.current?.requestFullscreen()}
+                    title="Tela cheia"
+                    aria-label="Tela cheia"
+                >
+                    <Maximize size={16} />
+                </button>
             </div>
         </div>
     )

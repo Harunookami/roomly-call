@@ -28,6 +28,7 @@ export class PeerMesh {
   private options: PeerMeshOptions;
   private peers = new Map<string, Peer>();
   private localTracks = new Map<MediaStreamTrack, MediaStream>();
+  private bitrateLimits = new Map<MediaStreamTrack, number>();
 
   constructor(options: PeerMeshOptions) {
     this.options = options;
@@ -60,16 +61,45 @@ export class PeerMesh {
     }
   }
 
-  addTrack(track: MediaStreamTrack, stream: MediaStream) {
+  addTrack(track: MediaStreamTrack, stream: MediaStream, maxBitrate?: number) {
     this.localTracks.set(track, stream);
+
+    if (maxBitrate) {
+      this.bitrateLimits.set(track, maxBitrate);
+    }
 
     for (const peer of this.peers.values()) {
       peer.senders.set(track, peer.connection.addTrack(track, stream));
     }
   }
 
+  // Troca o dispositivo sem renegociar a conexão.
+  replaceTrack(oldTrack: MediaStreamTrack, newTrack: MediaStreamTrack) {
+    const stream = this.localTracks.get(oldTrack);
+
+    if (!stream) {
+      return;
+    }
+
+    this.localTracks.delete(oldTrack);
+    this.localTracks.set(newTrack, stream);
+
+    for (const peer of this.peers.values()) {
+      const sender = peer.senders.get(oldTrack);
+
+      if (sender) {
+        peer.senders.delete(oldTrack);
+        peer.senders.set(newTrack, sender);
+        sender.replaceTrack(newTrack).catch((error) => {
+          console.error("Erro ao trocar dispositivo", error);
+        });
+      }
+    }
+  }
+
   removeTrack(track: MediaStreamTrack) {
     this.localTracks.delete(track);
+    this.bitrateLimits.delete(track);
 
     for (const peer of this.peers.values()) {
       const sender = peer.senders.get(track);
@@ -135,6 +165,7 @@ export class PeerMesh {
     }
 
     this.localTracks.clear();
+    this.bitrateLimits.clear();
   }
 
   private createPeer(peerId: string) {
@@ -172,6 +203,12 @@ export class PeerMesh {
       }
     };
 
+    connection.onsignalingstatechange = () => {
+      if (connection.signalingState === "stable") {
+        this.applyBitrateLimits(peer);
+      }
+    };
+
     connection.onconnectionstatechange = () => {
       if (connection.connectionState === "failed") {
         connection.restartIce();
@@ -193,6 +230,22 @@ export class PeerMesh {
     }
 
     return peer;
+  }
+
+  // Os parâmetros de envio só ficam disponíveis depois da negociação.
+  private applyBitrateLimits(peer: Peer) {
+    for (const [track, sender] of peer.senders) {
+      const maxBitrate = this.bitrateLimits.get(track);
+      const parameters = sender.getParameters();
+      const encoding = parameters.encodings?.[0];
+
+      if (maxBitrate && encoding && encoding.maxBitrate !== maxBitrate) {
+        encoding.maxBitrate = maxBitrate;
+        sender.setParameters(parameters).catch((error) => {
+          console.error("Erro ao ajustar qualidade", error);
+        });
+      }
+    }
   }
 
   private sendDescription(peerId: string, connection: RTCPeerConnection) {
