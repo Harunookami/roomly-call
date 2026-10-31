@@ -3,6 +3,8 @@ import { join as joinPath } from "node:path";
 import type { IceServer } from "../src/types/Room.ts";
 import { createRoomlyServer } from "./app.ts";
 
+const MIN_PASSWORD_LENGTH = 8;
+
 function loadIceServers() {
   const iceServers: IceServer[] = [
     { urls: process.env.STUN_URL ?? "stun:stun.l.google.com:19302" },
@@ -19,10 +21,22 @@ function loadIceServers() {
   return iceServers;
 }
 
-// O script de desenvolvimento passa a porta em que o proxy do Vite espera o servidor.
-const port = Number(process.argv[2] ?? process.env.PORT ?? 3001);
+// Em desenvolvimento a porta é fixa, porque é nela que o proxy do Vite espera o
+// servidor, e há uma senha padrão para não exigir configuração.
+const dev = process.argv.includes("--dev");
+const port = dev ? 3001 : Number(process.env.PORT ?? 3001);
+const password = process.env.ROOMLY_PASSWORD || (dev ? "roomly" : "");
+
+if (!dev && password.length < MIN_PASSWORD_LENGTH) {
+  console.error(
+    `Defina ROOMLY_PASSWORD com pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`
+  );
+  process.exit(1);
+}
 
 const { httpServer } = createRoomlyServer({
+  password,
+  dataDir: process.env.DATA_DIR ?? joinPath(import.meta.dirname, "..", "data"),
   iceServers: loadIceServers(),
   staticDir: joinPath(import.meta.dirname, "..", "dist"),
 });

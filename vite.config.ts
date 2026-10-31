@@ -9,6 +9,7 @@ export default defineConfig({
     proxy: {
       "/socket.io": { target: "http://localhost:3001", ws: true },
       "/chat-images": { target: "http://localhost:3001" },
+      "/api": { target: "http://localhost:3001" },
     },
   },
 });

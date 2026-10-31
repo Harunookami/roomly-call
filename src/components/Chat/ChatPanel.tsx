@@ -11,8 +11,8 @@ type ChatPanelProps = {
     client: RoomClient;
     messages: ChatMessage[];
     participants: Participant[];
+    hasMore: boolean;
     typingIds: string[];
-    selfId: string | null;
     visivel: boolean;
 }
 
@@ -49,17 +49,20 @@ function textoDigitando(nomes: string[]) {
         : "Várias pessoas estão digitando...";
 }
 
-export function ChatPanel({ client, messages, participants, typingIds, selfId, visivel }: ChatPanelProps) {
+export function ChatPanel({ client, messages, participants, hasMore, typingIds, visivel }: ChatPanelProps) {
     const [texto, setTexto] = useState("");
     const [imagem, setImagem] = useState<ImagemAnexada | null>(null);
     const [resposta, setResposta] = useState<ChatMessage | null>(null);
     const [enviando, setEnviando] = useState(false);
     const [erro, setErro] = useState("");
+    const [carregandoAnteriores, setCarregandoAnteriores] = useState(false);
 
     const listaRef = useRef<HTMLDivElement>(null);
     const campoRef = useRef<HTMLTextAreaElement>(null);
     const arquivoRef = useRef<HTMLInputElement>(null);
     const noFimRef = useRef(true);
+    const alturaAntesDeCarregarRef = useRef<number | null>(null);
+    const ultimaMensagemIdRef = useRef<string | undefined>(undefined);
 
     const rolarParaOFim = () => {
         if (listaRef.current && noFimRef.current) {
@@ -68,12 +71,34 @@ export function ChatPanel({ client, messages, participants, typingIds, selfId, v
     };
 
     useLayoutEffect(() => {
-        if (messages.at(-1)?.authorId === selfId) {
+        const lista = listaRef.current;
+        const ultima = messages.at(-1);
+
+        // Mantém na tela as mesmas mensagens quando as antigas entram por cima.
+        if (lista && alturaAntesDeCarregarRef.current !== null) {
+            lista.scrollTop += lista.scrollHeight - alturaAntesDeCarregarRef.current;
+            alturaAntesDeCarregarRef.current = null;
+            return;
+        }
+
+        if (ultima?.id !== ultimaMensagemIdRef.current && ultima?.authorName === client.name) {
             noFimRef.current = true;
         }
 
+        ultimaMensagemIdRef.current = ultima?.id;
         rolarParaOFim();
-    }, [messages, selfId, visivel]);
+    }, [messages, client, visivel]);
+
+    const handleCarregarAnteriores = async () => {
+        if (carregandoAnteriores) {
+            return;
+        }
+
+        setCarregandoAnteriores(true);
+        alturaAntesDeCarregarRef.current = listaRef.current?.scrollHeight ?? null;
+        await client.loadOlderMessages();
+        setCarregandoAnteriores(false);
+    };
 
     const handleRolagem = () => {
         const lista = listaRef.current;
@@ -203,6 +228,16 @@ export function ChatPanel({ client, messages, participants, typingIds, selfId, v
                 role="log"
                 aria-label="Mensagens do chat"
             >
+                {hasMore && (
+                    <button
+                        className="mx-auto mt-2 block cursor-pointer rounded-lg bg-tile px-3 py-1.5 text-xs transition-colors duration-200 hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                        onClick={handleCarregarAnteriores}
+                        disabled={carregandoAnteriores}
+                    >
+                        Carregar mensagens anteriores
+                    </button>
+                )}
+
                 {messages.length === 0 ? (
                     <p className="p-4 text-center text-sm text-slate-400">
                         Nenhuma mensagem ainda. Diga oi!
@@ -216,10 +251,10 @@ export function ChatPanel({ client, messages, participants, typingIds, selfId, v
                                 <ChatMessageItem
                                     key={message.id}
                                     message={message}
-                                    selfId={selfId}
+                                    selfName={client.name}
                                     compacta={
                                         !message.replyTo &&
-                                        anterior?.authorId === message.authorId &&
+                                        anterior?.authorName === message.authorName &&
                                         message.createdAt - anterior.createdAt < AGRUPAR_ATE_MS
                                     }
                                     onReply={responder}

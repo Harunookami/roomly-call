@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import {
+  CHAT_PAGE_SIZE,
   MAX_IMAGE_BYTES,
   MAX_MESSAGE_LENGTH,
   REACTION_EMOJIS,
@@ -9,29 +13,21 @@ import {
   type ChatSendRequest,
 } from "../src/types/Chat.ts";
 
-const MAX_MESSAGES_PER_ROOM = 500;
-const MAX_IMAGE_BYTES_PER_ROOM = 30_000_000;
-const MAX_IMAGE_BYTES_TOTAL = 256_000_000;
+const MAX_IMAGE_BYTES_TOTAL = 5_000_000_000;
 const REPLY_PREVIEW_LENGTH = 100;
 
 const RATE_WINDOW_MS = 10_000;
 const MAX_MESSAGES_PER_WINDOW = 10;
 const MAX_REACTIONS_PER_WINDOW = 30;
 
-type StoredImage = {
-  data: Buffer;
-  contentType: string;
-};
-
-type RoomChat = {
-  messages: ChatMessage[];
-  imageBytes: number;
-  rateLog: Map<string, number[]>;
-};
-
-type Author = {
+type MessageRow = {
   id: string;
-  name: string;
+  author_name: string;
+  text: string;
+  image_id: string | null;
+  reply_to: string | null;
+  reactions: string;
+  created_at: number;
 };
 
 export type ChatSendResult =
@@ -66,21 +62,84 @@ function detectImageType(data: Buffer) {
   return null;
 }
 
-export class ChatStore {
-  private rooms = new Map<string, RoomChat>();
-  private images = new Map<string, StoredImage>();
-  private totalImageBytes = 0;
+function toMessage(row: MessageRow): ChatMessage {
+  return {
+    id: row.id,
+    authorName: row.author_name,
+    text: row.text,
+    imageUrl: row.image_id ? `/chat-images/${row.image_id}` : null,
+    replyTo: row.reply_to ? JSON.parse(row.reply_to) : null,
+    reactions: JSON.parse(row.reactions),
+    createdAt: row.created_at,
+  };
+}
 
-  getMessages(code: string) {
-    return this.rooms.get(code)?.messages ?? [];
+export class ChatStore {
+  private db: DatabaseSync;
+  private imagesDir: string;
+  private rateLog = new Map<string, number[]>();
+
+  constructor(dataDir: string) {
+    this.imagesDir = joinPath(dataDir, "images");
+    mkdirSync(this.imagesDir, { recursive: true });
+
+    this.db = new DatabaseSync(joinPath(dataDir, "roomly.db"));
+    this.db.exec(`
+      PRAGMA journal_mode = WAL;
+
+      CREATE TABLE IF NOT EXISTS messages (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        author_name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        image_id TEXT,
+        reply_to TEXT,
+        reactions TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS images (
+        id TEXT PRIMARY KEY,
+        content_type TEXT NOT NULL,
+        size INTEGER NOT NULL
+      );
+    `);
+  }
+
+  // Devolve as mensagens mais recentes (ou as anteriores a `before`), da mais antiga
+  // para a mais nova.
+  getPage(before?: unknown) {
+    const rows = (
+      typeof before === "string"
+        ? this.db
+            .prepare(
+              `SELECT * FROM messages
+               WHERE seq < (SELECT seq FROM messages WHERE id = ?)
+               ORDER BY seq DESC LIMIT ?`
+            )
+            .all(before, CHAT_PAGE_SIZE + 1)
+        : this.db
+            .prepare("SELECT * FROM messages ORDER BY seq DESC LIMIT ?")
+            .all(CHAT_PAGE_SIZE + 1)
+    ) as MessageRow[];
+
+    return {
+      messages: rows.slice(0, CHAT_PAGE_SIZE).reverse().map(toMessage),
+      hasMore: rows.length > CHAT_PAGE_SIZE,
+    };
   }
 
   getImage(id: string) {
-    return this.images.get(id);
+    const row = this.db
+      .prepare("SELECT content_type FROM images WHERE id = ?")
+      .get(id) as { content_type: string } | undefined;
+
+    return row
+      ? { path: joinPath(this.imagesDir, id), contentType: row.content_type }
+      : undefined;
   }
 
-  send(code: string, author: Author, request: ChatSendRequest): ChatSendResult {
-    const room = this.getRoom(code);
+  send(authorName: string, request: ChatSendRequest): ChatSendResult {
     const text = typeof request?.text === "string" ? request.text.trim() : "";
     const rawImage: unknown = request?.image;
     const image = Buffer.isBuffer(rawImage) ? rawImage : null;
@@ -93,75 +152,78 @@ export class ChatStore {
       return { ok: false, error: "too-long" };
     }
 
-    if (!this.allow(room, `message:${author.id}`, MAX_MESSAGES_PER_WINDOW)) {
+    if (!this.allow(`message:${authorName}`, MAX_MESSAGES_PER_WINDOW)) {
       return { ok: false, error: "rate-limited" };
     }
 
-    let imageUrl: string | null = null;
+    let imageId: string | null = null;
 
     if (image) {
-      const stored = this.storeImage(room, image);
+      const stored = this.storeImage(image);
 
       if ("error" in stored) {
         return { ok: false, error: stored.error };
       }
 
-      imageUrl = stored.url;
+      imageId = stored.id;
     }
 
-    const replied = room.messages.find(
-      (message) => message.id === request?.replyToId
-    );
+    const replied = this.findMessage(request?.replyToId);
+    const replyTo = replied
+      ? {
+          id: replied.id,
+          authorName: replied.authorName,
+          text: replied.text.slice(0, REPLY_PREVIEW_LENGTH),
+        }
+      : null;
+    const id = randomUUID();
+    const createdAt = Date.now();
 
-    const message: ChatMessage = {
-      id: randomUUID(),
-      authorId: author.id,
-      authorName: author.name,
-      text,
-      imageUrl,
-      replyTo: replied
-        ? {
-            id: replied.id,
-            authorName: replied.authorName,
-            text: replied.text.slice(0, REPLY_PREVIEW_LENGTH),
-          }
-        : null,
-      reactions: {},
-      createdAt: Date.now(),
+    this.db
+      .prepare(
+        `INSERT INTO messages
+           (id, author_name, text, image_id, reply_to, reactions, created_at)
+         VALUES (?, ?, ?, ?, ?, '{}', ?)`
+      )
+      .run(
+        id,
+        authorName,
+        text,
+        imageId,
+        replyTo ? JSON.stringify(replyTo) : null,
+        createdAt
+      );
+
+    return {
+      ok: true,
+      message: {
+        id,
+        authorName,
+        text,
+        imageUrl: imageId ? `/chat-images/${imageId}` : null,
+        replyTo,
+        reactions: {},
+        createdAt,
+      },
     };
-
-    room.messages.push(message);
-
-    if (room.messages.length > MAX_MESSAGES_PER_ROOM) {
-      this.releaseImage(room, room.messages.shift()?.imageUrl);
-    }
-
-    return { ok: true, message };
   }
 
-  toggleReaction(
-    code: string,
-    participantId: string,
-    messageId: unknown,
-    emoji: unknown
-  ) {
-    const room = this.rooms.get(code);
-    const message = room?.messages.find(({ id }) => id === messageId);
+  toggleReaction(authorName: string, messageId: unknown, emoji: unknown) {
+    const message = this.findMessage(messageId);
 
     if (
-      !room ||
       !message ||
       typeof emoji !== "string" ||
       !REACTION_EMOJIS.includes(emoji) ||
-      !this.allow(room, `reaction:${participantId}`, MAX_REACTIONS_PER_WINDOW)
+      !this.allow(`reaction:${authorName}`, MAX_REACTIONS_PER_WINDOW)
     ) {
       return null;
     }
 
     const reactors = message.reactions[emoji] ?? [];
-    const updated = reactors.includes(participantId)
-      ? reactors.filter((id) => id !== participantId)
-      : [...reactors, participantId];
+    const updated = reactors.includes(authorName)
+      ? reactors.filter((name) => name !== authorName)
+      : [...reactors, authorName];
 
     if (updated.length > 0) {
       message.reactions[emoji] = updated;
@@ -169,36 +231,30 @@ export class ChatStore {
       delete message.reactions[emoji];
     }
 
+    this.db
+      .prepare("UPDATE messages SET reactions = ? WHERE id = ?")
+      .run(JSON.stringify(message.reactions), message.id);
+
     return message;
   }
 
-  deleteRoom(code: string) {
-    const room = this.rooms.get(code);
-
-    for (const message of room?.messages ?? []) {
-      if (room) {
-        this.releaseImage(room, message.imageUrl);
-      }
-    }
-
-    this.rooms.delete(code);
+  close() {
+    this.db.close();
   }
 
-  private getRoom(code: string) {
-    let room = this.rooms.get(code);
-
-    if (!room) {
-      room = { messages: [], imageBytes: 0, rateLog: new Map() };
-      this.rooms.set(code, room);
+  private findMessage(id: unknown) {
+    if (typeof id !== "string") {
+      return null;
     }
 
-    return room;
+    const row = this.db
+      .prepare("SELECT * FROM messages WHERE id = ?")
+      .get(id) as MessageRow | undefined;
+
+    return row ? toMessage(row) : null;
   }
 
-  private storeImage(
-    room: RoomChat,
-    data: Buffer
-  ): { url: string } | { error: ChatSendError } {
+  private storeImage(data: Buffer): { id: string } | { error: ChatSendError } {
     const contentType = detectImageType(data);
 
     if (!contentType) {
@@ -209,36 +265,34 @@ export class ChatStore {
       return { error: "image-too-large" };
     }
 
-    if (
-      room.imageBytes + data.length > MAX_IMAGE_BYTES_PER_ROOM ||
-      this.totalImageBytes + data.length > MAX_IMAGE_BYTES_TOTAL
-    ) {
+    const { total } = this.db
+      .prepare("SELECT COALESCE(SUM(size), 0) AS total FROM images")
+      .get() as { total: number };
+
+    if (total + data.length > MAX_IMAGE_BYTES_TOTAL) {
       return { error: "image-limit" };
     }
 
     const id = randomUUID();
+    const path = joinPath(this.imagesDir, id);
 
-    this.images.set(id, { data, contentType });
-    room.imageBytes += data.length;
-    this.totalImageBytes += data.length;
+    writeFileSync(path, data);
 
-    return { url: `/chat-images/${id}` };
-  }
-
-  private releaseImage(room: RoomChat, imageUrl: string | null | undefined) {
-    const id = imageUrl?.split("/").pop();
-    const image = id ? this.images.get(id) : undefined;
-
-    if (id && image) {
-      this.images.delete(id);
-      room.imageBytes -= image.data.length;
-      this.totalImageBytes -= image.data.length;
+    try {
+      this.db
+        .prepare("INSERT INTO images (id, content_type, size) VALUES (?, ?, ?)")
+        .run(id, contentType, data.length);
+    } catch (error) {
+      unlinkSync(path);
+      throw error;
     }
+
+    return { id };
   }
 
-  private allow(room: RoomChat, key: string, limit: number) {
+  private allow(key: string, limit: number) {
     const now = Date.now();
-    const recent = (room.rateLog.get(key) ?? []).filter(
+    const recent = (this.rateLog.get(key) ?? []).filter(
       (time) => now - time < RATE_WINDOW_MS
     );
 
@@ -246,7 +300,7 @@ export class ChatStore {
       return false;
     }
 
-    room.rateLog.set(key, [...recent, now]);
+    this.rateLog.set(key, [...recent, now]);
 
     return true;
   }

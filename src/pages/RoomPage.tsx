@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
 
 import { Header } from "../components/Header/Header";
@@ -9,6 +9,7 @@ import { CallControls } from "../components/CallControls/CallControls";
 import { ChatPanel } from "../components/Chat/ChatPanel";
 import { ScreenShareDialog } from "../components/Dialogs/ScreenShareDialog";
 import { SettingsDialog } from "../components/Dialogs/SettingsDialog";
+import { EntryForm } from "../components/Entry/EntryForm";
 import { RemoteAudio } from "../components/Media/RemoteAudio";
 import { ChannelSidebar } from "../components/Sidebar/ChannelSidebar";
 import { PanelTabs } from "../components/Sidebar/PanelTabs";
@@ -18,18 +19,14 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useRoom } from "../hooks/useRoom";
 import { keyLabel } from "../services/preferences";
 import type { RoomStatus } from "../services/roomClient";
-import { loadUserName, saveUserName } from "../services/userName";
+import { checkSession } from "../services/session";
 import type { Participant } from "../types/Participant";
-import { MAX_NAME_LENGTH, MAX_PARTICIPANTS } from "../types/Room";
+import { MAX_PARTICIPANTS } from "../types/Room";
 
 const MENSAGENS_FIM: Partial<Record<RoomStatus, { titulo: string; texto: string }>> = {
-  "not-found": {
-    titulo: "Sala não encontrada",
-    texto: "Confira o código. Salas vazias são encerradas depois de um minuto.",
-  },
   full: {
     titulo: "Sala cheia",
-    texto: `Esta sala já tem o limite de ${MAX_PARTICIPANTS} participantes.`,
+    texto: `A sala já tem o limite de ${MAX_PARTICIPANTS} participantes.`,
   },
   "invalid-name": {
     titulo: "Nome inválido",
@@ -47,7 +44,7 @@ const MENSAGENS_FIM: Partial<Record<RoomStatus, { titulo: string; texto: string 
 
 function TelaCentral({ titulo, texto }: { titulo: string; texto: string }) {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-[#080d18] px-4 text-center text-white">
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-rail px-4 text-center text-white">
       <h1 className="text-3xl font-bold tracking-tight">{titulo}</h1>
       <p className="text-slate-300">{texto}</p>
       <Link
@@ -60,39 +57,10 @@ function TelaCentral({ titulo, texto }: { titulo: string; texto: string }) {
   );
 }
 
-function Lobby({ codigoSala, onEntrar }: { codigoSala: string; onEntrar: (nome: string) => void }) {
-  const [nome, setNome] = useState(loadUserName);
-
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-
-    if (nome.trim()) {
-      onEntrar(nome.trim());
-    }
-  };
-
+function TelaCarregando({ texto }: { texto: string }) {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-[#080d18] px-4 text-center text-white">
-      <form className="flex w-full max-w-100 flex-col gap-4" onSubmit={handleSubmit}>
-        <h1 className="text-3xl font-bold tracking-tight">Entrar na sala {codigoSala}</h1>
-
-        <input
-          className="h-12 rounded-lg border border-slate-600 bg-[#080d18] px-4 text-white outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Digite seu nome"
-          aria-label="Seu nome"
-          maxLength={MAX_NAME_LENGTH}
-          value={nome}
-          onChange={(event) => setNome(event.target.value)}
-          autoFocus
-        />
-
-        <button
-          className="cursor-pointer rounded-lg bg-blue-500 px-9 py-2 transition-colors duration-300 hover:bg-blue-600"
-          type="submit"
-        >
-          Entrar
-        </button>
-      </form>
+    <main className="flex min-h-dvh items-center justify-center bg-rail text-slate-300">
+      {texto}
     </main>
   );
 }
@@ -101,8 +69,8 @@ function Lobby({ codigoSala, onEntrar }: { codigoSala: string; onEntrar: (nome: 
 // visível, e "chamada" equivale a mostrar o chat no painel lateral.
 type Aba = "chamada" | "chat" | "participantes";
 
-function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
-  const { client, state } = useRoom(codigoSala, nome);
+function Chamada({ nome }: { nome: string }) {
+  const { client, state } = useRoom(nome);
   const [audioBloqueado, setAudioBloqueado] = useState(false);
   const [dialogo, setDialogo] = useState<"settings" | "screen" | null>(null);
   const [aba, setAba] = useState<Aba>("chamada");
@@ -141,11 +109,7 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
   }
 
   if (state.status === "connecting") {
-    return (
-      <main className="flex min-h-dvh items-center justify-center bg-[#080d18] text-slate-300">
-        Entrando na sala...
-      </main>
-    );
+    return <TelaCarregando texto="Entrando na sala..." />;
   }
 
   const getCameraStream = (participant: Participant) => {
@@ -192,10 +156,9 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
 
   return (
     <main className="flex h-dvh bg-stage text-white">
-      <ServerRail codigoSala={codigoSala} />
+      <ServerRail />
 
       <ChannelSidebar
-        codigoSala={codigoSala}
         participants={state.participants}
         selfId={state.selfId}
         speakingIds={state.speakingIds}
@@ -203,7 +166,7 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header codigoSala={codigoSala} />
+        <Header />
 
         {state.status === "reconnecting" && (
           <p className="bg-orange-500/20 px-4 py-2 text-center text-sm text-orange-200" role="status">
@@ -276,7 +239,7 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
                   state.localScreen ? client.stopScreen() : setDialogo("screen")
                 }
                 onOpenSettings={() => setDialogo("settings")}
-                onLeave={() => navigate("/")}
+                onLeave={() => navigate("/", { replace: true })}
               />
             </div>
           </section>
@@ -297,9 +260,9 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
             <ChatPanel
               client={client}
               messages={state.messages}
+              hasMore={state.hasMoreMessages}
               participants={state.participants}
               typingIds={state.typingIds}
-              selfId={state.selfId}
               visivel={abaLateral === "chat"}
             />
 
@@ -357,30 +320,36 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
 }
 
 function RoomPage() {
-  const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const codigoSala = (id ?? "").toUpperCase();
+  const [autenticado, setAutenticado] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    checkSession()
+      .then(setAutenticado)
+      .catch(() => setAutenticado(false));
+  }, []);
 
   // O nome fica no histórico para sobreviver a um recarregamento da página.
   const nome: unknown = location.state?.nome;
 
-  if (typeof nome !== "string" || !nome) {
+  if (autenticado === null) {
+    return <TelaCarregando texto="Carregando..." />;
+  }
+
+  if (!autenticado || typeof nome !== "string" || !nome) {
     return (
-      <Lobby
-        codigoSala={codigoSala}
+      <EntryForm
+        precisaDeSenha={!autenticado}
         onEntrar={(novoNome) => {
-          saveUserName(novoNome);
-          navigate(location.pathname, {
-            replace: true,
-            state: { nome: novoNome },
-          });
+          setAutenticado(true);
+          navigate("/", { replace: true, state: { nome: novoNome } });
         }}
       />
     );
   }
 
-  return <Chamada key={codigoSala} codigoSala={codigoSala} nome={nome} />;
+  return <Chamada nome={nome} />;
 }
 
 export default RoomPage;

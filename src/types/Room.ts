@@ -1,10 +1,12 @@
 import type {
   ChatMessage,
+  ChatPage,
   ChatSendRequest,
   ChatSendResponse,
 } from "./Chat.ts";
 import type { MediaState, Participant } from "./Participant.ts";
 
+export const ROOM_NAME = "Nossa sala";
 export const MAX_PARTICIPANTS = 8;
 export const MAX_NAME_LENGTH = 40;
 
@@ -15,12 +17,11 @@ export type IceServer = {
 };
 
 export type JoinRequest = {
-  code: string;
   name: string;
   reconnectToken?: string;
 };
 
-export type JoinError = "not-found" | "full" | "invalid-name";
+export type JoinError = "full" | "invalid-name";
 
 export type JoinResponse =
   | {
@@ -29,12 +30,12 @@ export type JoinResponse =
       reconnectToken: string;
       participants: Participant[];
       messages: ChatMessage[];
+      hasMoreMessages: boolean;
       iceServers: IceServer[];
     }
   | { ok: false; error: JoinError };
 
 export type ClientToServerEvents = {
-  "room:create": (ack: (response: { code: string }) => void) => void;
   "room:join": (
     request: JoinRequest,
     ack: (response: JoinResponse) => void
@@ -47,6 +48,7 @@ export type ClientToServerEvents = {
     request: ChatSendRequest,
     ack: (response: ChatSendResponse) => void
   ) => void;
+  "chat:history": (before: string, ack: (page: ChatPage) => void) => void;
   "chat:typing": (typing: boolean) => void;
   "chat:react": (reaction: { messageId: string; emoji: string }) => void;
 };

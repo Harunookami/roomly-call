@@ -1,18 +1,18 @@
 import { Volume2 } from "lucide-react";
 
 import type { Participant } from "../../types/Participant";
+import { ROOM_NAME } from "../../types/Room";
 import { Avatar } from "../Participants/Avatar";
 import { VoiceStatusIcons } from "../Participants/VoiceStatusIcons";
 
 type ChannelSidebarProps = {
-    codigoSala: string;
     participants: Participant[];
     selfId: string | null;
     speakingIds: string[];
     reconectando: boolean;
 }
 
-export function ChannelSidebar({ codigoSala, participants, selfId, speakingIds, reconectando }: ChannelSidebarProps) {
+export function ChannelSidebar({ participants, selfId, speakingIds, reconectando }: ChannelSidebarProps) {
     const eu = participants.find((participant) => participant.id === selfId);
 
     return (
@@ -28,7 +28,7 @@ export function ChannelSidebar({ codigoSala, participants, selfId, speakingIds, 
 
                 <p className="flex items-center gap-2 rounded-lg bg-tile px-2 py-1.5 text-sm font-medium">
                     <Volume2 size={16} className="shrink-0 text-slate-400" />
-                    <span className="truncate">Sala {codigoSala}</span>
+                    <span className="truncate">{ROOM_NAME}</span>
                 </p>
 
                 <ul className="mt-1 ml-4 flex flex-col gap-1">

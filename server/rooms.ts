@@ -1,4 +1,4 @@
-import { randomBytes, randomInt, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { MediaState, Participant } from "../src/types/Participant.ts";
 import {
@@ -7,19 +7,10 @@ import {
   type JoinError,
 } from "../src/types/Room.ts";
 
-// Sem caracteres ambíguos (0/O, 1/I/L) para facilitar ditar o código.
-const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-const CODE_LENGTH = 8;
-
 type Member = {
   participant: Participant;
   reconnectToken: string;
   socketId: string;
-};
-
-type Room = {
-  code: string;
-  members: Map<string, Member>;
 };
 
 export type JoinResult =
@@ -34,54 +25,17 @@ export type JoinResult =
 export type RemoveResult = {
   removed: Participant;
   newHost: Participant | null;
-  roomEmpty: boolean;
 };
 
-export function normalizeRoomCode(code: unknown) {
-  return typeof code === "string" ? code.trim().toUpperCase() : "";
-}
-
 export class RoomStore {
-  private rooms = new Map<string, Room>();
-
-  createRoom() {
-    let code: string;
-
-    do {
-      code = Array.from(
-        { length: CODE_LENGTH },
-        () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]
-      ).join("");
-    } while (this.rooms.has(code));
-
-    this.rooms.set(code, { code, members: new Map() });
-
-    return code;
-  }
-
-  deleteRoom(code: string) {
-    this.rooms.delete(code);
-  }
-
-  isEmpty(code: string) {
-    const room = this.rooms.get(code);
-
-    return !room || room.members.size === 0;
-  }
+  private members = new Map<string, Member>();
 
   join(
-    code: string,
     rawName: unknown,
     socketId: string,
     reconnectToken?: unknown
   ): JoinResult {
-    const room = this.rooms.get(code);
-
-    if (!room) {
-      return { ok: false, error: "not-found" };
-    }
-
-    const existing = [...room.members.values()].find(
+    const existing = [...this.members.values()].find(
       (member) => member.reconnectToken === reconnectToken
     );
 
@@ -93,7 +47,7 @@ export class RoomStore {
         ok: true,
         member: existing,
         reattached: true,
-        participants: this.participants(room),
+        participants: this.participants(),
       };
     }
 
@@ -106,7 +60,7 @@ export class RoomStore {
       return { ok: false, error: "invalid-name" };
     }
 
-    if (room.members.size >= MAX_PARTICIPANTS) {
+    if (this.members.size >= MAX_PARTICIPANTS) {
       return { ok: false, error: "full" };
     }
 
@@ -116,7 +70,7 @@ export class RoomStore {
       participant: {
         id: randomUUID(),
         name,
-        isHost: room.members.size === 0,
+        isHost: this.members.size === 0,
         connected: true,
         micOn: false,
         deafened: false,
@@ -125,19 +79,19 @@ export class RoomStore {
       },
     };
 
-    room.members.set(member.participant.id, member);
+    this.members.set(member.participant.id, member);
 
     return {
       ok: true,
       member,
       reattached: false,
-      participants: this.participants(room),
+      participants: this.participants(),
     };
   }
 
   // Devolve null quando o socket já foi substituído por uma reconexão mais nova.
-  markDisconnected(code: string, participantId: string, socketId: string) {
-    const member = this.rooms.get(code)?.members.get(participantId);
+  markDisconnected(participantId: string, socketId: string) {
+    const member = this.members.get(participantId);
 
     if (!member || member.socketId !== socketId) {
       return null;
@@ -148,40 +102,34 @@ export class RoomStore {
     return member.participant;
   }
 
-  isConnected(code: string, participantId: string) {
-    return !!this.rooms.get(code)?.members.get(participantId)?.participant
-      .connected;
+  isConnected(participantId: string) {
+    return !!this.members.get(participantId)?.participant.connected;
   }
 
-  remove(code: string, participantId: string): RemoveResult | null {
-    const room = this.rooms.get(code);
-    const member = room?.members.get(participantId);
+  remove(participantId: string): RemoveResult | null {
+    const member = this.members.get(participantId);
 
-    if (!room || !member) {
+    if (!member) {
       return null;
     }
 
-    room.members.delete(participantId);
+    this.members.delete(participantId);
 
     let newHost: Participant | null = null;
 
-    if (member.participant.isHost && room.members.size > 0) {
-      const members = [...room.members.values()];
+    if (member.participant.isHost && this.members.size > 0) {
+      const members = [...this.members.values()];
       const next = members.find((m) => m.participant.connected) ?? members[0];
 
       next.participant.isHost = true;
       newHost = next.participant;
     }
 
-    return {
-      removed: member.participant,
-      newHost,
-      roomEmpty: room.members.size === 0,
-    };
+    return { removed: member.participant, newHost };
   }
 
-  updateMedia(code: string, participantId: string, media: MediaState) {
-    const member = this.rooms.get(code)?.members.get(participantId);
+  updateMedia(participantId: string, media: MediaState) {
+    const member = this.members.get(participantId);
 
     if (!member) {
       return null;
@@ -196,13 +144,13 @@ export class RoomStore {
     return member.participant;
   }
 
-  getMember(code: string, participantId: unknown) {
+  getMember(participantId: unknown) {
     return typeof participantId === "string"
-      ? this.rooms.get(code)?.members.get(participantId)
+      ? this.members.get(participantId)
       : undefined;
   }
 
-  private participants(room: Room) {
-    return [...room.members.values()].map((member) => member.participant);
+  private participants() {
+    return [...this.members.values()].map((member) => member.participant);
   }
 }

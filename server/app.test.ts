@@ -1,12 +1,17 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 
 import { io, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  CHAT_PAGE_SIZE,
   MAX_IMAGE_BYTES,
   MAX_MESSAGE_LENGTH,
   REACTION_EMOJIS,
+  type ChatPage,
   type ChatSendRequest,
   type ChatSendResponse,
 } from "../src/types/Chat.ts";
@@ -17,19 +22,49 @@ import {
   type ServerToClientEvents,
 } from "../src/types/Room.ts";
 import { createRoomlyServer } from "./app.ts";
+import { ChatStore } from "./chat.ts";
 
 type Client = Socket<ServerToClientEvents, ClientToServerEvents>;
 type JoinOk = Extract<JoinResponse, { ok: true }>;
 
+const PASSWORD = "senha-de-teste";
 const iceServers = [{ urls: "stun:stun.example.test:3478" }];
 
 describe("servidor do Roomly", () => {
   let server: ReturnType<typeof createRoomlyServer>;
+  let dataDir: string;
   let url: string;
+  let cookie: string;
   let clients: Client[];
 
+  const startServer = async () => {
+    server = createRoomlyServer({
+      password: PASSWORD,
+      dataDir,
+      iceServers,
+      reconnectGraceMs: 50,
+    });
+
+    await new Promise<void>((resolve) =>
+      server.httpServer.listen(0, "127.0.0.1", resolve)
+    );
+
+    const { port } = server.httpServer.address() as AddressInfo;
+    url = `http://127.0.0.1:${port}`;
+  };
+
+  const login = (password: string, headers: Record<string, string> = {}) =>
+    fetch(`${url}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ password }),
+    });
+
   const connect = async () => {
-    const client: Client = io(url, { reconnection: false });
+    const client: Client = io(url, {
+      reconnection: false,
+      extraHeaders: { cookie },
+    });
 
     clients.push(client);
     await new Promise<void>((resolve) => client.once("connect", resolve));
@@ -37,18 +72,13 @@ describe("servidor do Roomly", () => {
     return client;
   };
 
-  const createRoom = (client: Client) =>
-    new Promise<string>((resolve) =>
-      client.emit("room:create", ({ code }) => resolve(code))
-    );
-
-  const join = (client: Client, code: string, name: string, token?: string) =>
+  const join = (client: Client, name: string, token?: string) =>
     new Promise<JoinResponse>((resolve) =>
-      client.emit("room:join", { code, name, reconnectToken: token }, resolve)
+      client.emit("room:join", { name, reconnectToken: token }, resolve)
     );
 
-  const joinOk = async (client: Client, code: string, name: string) =>
-    (await join(client, code, name)) as JoinOk;
+  const joinOk = async (client: Client, name: string) =>
+    (await join(client, name)) as JoinOk;
 
   const nextEvent = <E extends keyof ServerToClientEvents>(
     client: Client,
@@ -64,179 +94,232 @@ describe("servidor do Roomly", () => {
 
   beforeEach(async () => {
     clients = [];
-    server = createRoomlyServer({
-      iceServers,
-      reconnectGraceMs: 50,
-      emptyRoomTtlMs: 50,
-    });
+    dataDir = mkdtempSync(joinPath(tmpdir(), "roomly-test-"));
+    await startServer();
 
-    await new Promise<void>((resolve) =>
-      server.httpServer.listen(0, "127.0.0.1", resolve)
-    );
+    const response = await login(PASSWORD);
 
-    const { port } = server.httpServer.address() as AddressInfo;
-    url = `http://127.0.0.1:${port}`;
+    cookie = response.headers.get("set-cookie")!.split(";")[0];
   });
 
   afterEach(async () => {
     clients.forEach((client) => client.disconnect());
     await server.close();
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
-  it("cria a sala e torna o primeiro participante anfitrião", async () => {
-    const client = await connect();
-    const code = await createRoom(client);
-    const response = await joinOk(client, code, "  Ana  ");
+  describe("senha de acesso", () => {
+    it("define um cookie protegido ao acertar a senha", async () => {
+      const response = await login(PASSWORD);
+      const setCookie = response.headers.get("set-cookie");
 
-    expect(code).toMatch(/^[A-Z2-9]{8}$/);
-    expect(response.iceServers).toEqual(iceServers);
-    expect(response.participants).toHaveLength(1);
-    expect(response.participants[0]).toMatchObject({
-      name: "Ana",
-      isHost: true,
+      expect(response.status).toBe(204);
+      expect(setCookie).toContain("HttpOnly");
+      expect(setCookie).toContain("SameSite=Strict");
+      expect(setCookie).not.toContain("Secure");
+    });
+
+    it("marca o cookie como seguro atrás de um proxy HTTPS", async () => {
+      const response = await login(PASSWORD, {
+        "x-forwarded-proto": "https",
+      });
+
+      expect(response.headers.get("set-cookie")).toContain("Secure");
+    });
+
+    it("recusa senha errada", async () => {
+      const response = await login("senha-errada");
+
+      expect(response.status).toBe(401);
+      expect(response.headers.get("set-cookie")).toBeNull();
+    });
+
+    it("bloqueia novos logins após muitas tentativas, sem derrubar quem entrou", async () => {
+      for (let i = 0; i < 10; i++) {
+        expect((await login("senha-errada")).status).toBe(401);
+      }
+
+      expect((await login("senha-errada")).status).toBe(429);
+      expect((await login(PASSWORD)).status).toBe(429);
+
+      const response = await join(await connect(), "Ana");
+
+      expect(response.ok).toBe(true);
+    });
+
+    it("informa se a sessão é válida", async () => {
+      const check = async (headers: Record<string, string>) =>
+        (await fetch(`${url}/api/session`, { headers })).json();
+
+      expect(await check({})).toEqual({ authenticated: false });
+      expect(await check({ cookie: "roomly_session=falso" })).toEqual({
+        authenticated: false,
+      });
+      expect(await check({ cookie })).toEqual({ authenticated: true });
+    });
+
+    it("recusa a conexão em tempo real sem sessão", async () => {
+      const client: Client = io(url, { reconnection: false });
+
+      clients.push(client);
+
+      await new Promise<void>((resolve, reject) => {
+        client.once("connect", () => reject(new Error("conectou sem senha")));
+        client.once("connect_error", () => resolve());
+      });
+    });
+
+    it("mantém a sessão depois de reiniciar o servidor", async () => {
+      await server.close();
+      await startServer();
+
+      const response = await fetch(`${url}/api/session`, {
+        headers: { cookie },
+      });
+
+      expect(await response.json()).toEqual({ authenticated: true });
     });
   });
 
-  it("aceita o código em minúsculas", async () => {
-    const client = await connect();
-    const code = await createRoom(client);
+  describe("sala", () => {
+    it("torna o primeiro participante anfitrião", async () => {
+      const response = await joinOk(await connect(), "  Ana  ");
 
-    const response = await join(client, code.toLowerCase(), "Ana");
-
-    expect(response.ok).toBe(true);
-  });
-
-  it("recusa sala inexistente e nome vazio", async () => {
-    const client = await connect();
-    const code = await createRoom(client);
-
-    expect(await join(client, "NAOEXISTE", "Ana")).toEqual({
-      ok: false,
-      error: "not-found",
+      expect(response.iceServers).toEqual(iceServers);
+      expect(response.participants).toHaveLength(1);
+      expect(response.participants[0]).toMatchObject({
+        name: "Ana",
+        isHost: true,
+      });
     });
-    expect(await join(client, code, "   ")).toEqual({
-      ok: false,
-      error: "invalid-name",
+
+    it("recusa nome vazio", async () => {
+      expect(await join(await connect(), "   ")).toEqual({
+        ok: false,
+        error: "invalid-name",
+      });
     });
-  });
 
-  it("recusa entrada quando a sala está cheia", async () => {
-    const owner = await connect();
-    const code = await createRoom(owner);
+    it("recusa entrada quando a sala está cheia", async () => {
+      for (let i = 0; i < MAX_PARTICIPANTS; i++) {
+        await join(await connect(), `Pessoa ${i}`);
+      }
 
-    for (let i = 0; i < MAX_PARTICIPANTS; i++) {
-      await join(await connect(), code, `Pessoa ${i}`);
-    }
-
-    expect(await join(await connect(), code, "Extra")).toEqual({
-      ok: false,
-      error: "full",
+      expect(await join(await connect(), "Extra")).toEqual({
+        ok: false,
+        error: "full",
+      });
     });
-  });
 
-  it("repassa sinalização somente dentro da mesma sala", async () => {
-    const ana = await connect();
-    const bia = await connect();
-    const intruso = await connect();
-    const code = await createRoom(ana);
+    it("não repassa sinalização de quem não entrou", async () => {
+      const ana = await connect();
+      const bia = await connect();
+      const intruso = await connect();
 
-    const self = await joinOk(ana, code, "Ana");
-    const other = await joinOk(bia, code, "Bia");
-    await joinOk(intruso, await createRoom(intruso), "Intruso");
+      const self = await joinOk(ana, "Ana");
+      const other = await joinOk(bia, "Bia");
 
-    const received: unknown[] = [];
-    bia.on("signal", (message) => received.push(message));
+      const received: unknown[] = [];
+      bia.on("signal", (message) => received.push(message));
 
-    intruso.emit("signal", { to: other.selfId, data: "invasão" });
-    ana.emit("signal", { to: other.selfId, data: "oferta" });
+      intruso.emit("signal", { to: other.selfId, data: "invasão" });
+      ana.emit("signal", { to: other.selfId, data: "oferta" });
 
-    await nextEvent(bia, "signal");
+      await nextEvent(bia, "signal");
 
-    expect(received).toEqual([{ from: self.selfId, data: "oferta" }]);
-  });
+      expect(received).toEqual([{ from: self.selfId, data: "oferta" }]);
+    });
 
-  it("transfere o anfitrião quando ele sai", async () => {
-    const ana = await connect();
-    const bia = await connect();
-    const code = await createRoom(ana);
+    it("transfere o anfitrião quando ele sai", async () => {
+      const ana = await connect();
+      const bia = await connect();
 
-    await joinOk(ana, code, "Ana");
-    const other = await joinOk(bia, code, "Bia");
+      await joinOk(ana, "Ana");
+      const other = await joinOk(bia, "Bia");
 
-    const left = nextEvent(bia, "participant:left");
-    const updated = nextEvent(bia, "participant:updated");
-    ana.emit("room:leave");
+      const left = nextEvent(bia, "participant:left");
+      const updated = nextEvent(bia, "participant:updated");
+      ana.emit("room:leave");
 
-    await left;
+      await left;
 
-    expect(await updated).toMatchObject({ id: other.selfId, isHost: true });
-  });
+      expect(await updated).toMatchObject({ id: other.selfId, isHost: true });
+    });
 
-  it("só o anfitrião pode remover participantes", async () => {
-    const ana = await connect();
-    const bia = await connect();
-    const code = await createRoom(ana);
+    it("só o anfitrião pode remover participantes", async () => {
+      const ana = await connect();
+      const bia = await connect();
 
-    const host = await joinOk(ana, code, "Ana");
-    const guest = await joinOk(bia, code, "Bia");
+      const host = await joinOk(ana, "Ana");
+      const guest = await joinOk(bia, "Bia");
 
-    let hostKicked = false;
-    ana.on("room:kicked", () => (hostKicked = true));
-    bia.emit("room:kick", host.selfId);
+      let hostKicked = false;
+      ana.on("room:kicked", () => (hostKicked = true));
+      bia.emit("room:kick", host.selfId);
 
-    const kicked = nextEvent(bia, "room:kicked");
-    const left = nextEvent(ana, "participant:left");
-    ana.emit("room:kick", guest.selfId);
+      const kicked = nextEvent(bia, "room:kicked");
+      const left = nextEvent(ana, "participant:left");
+      ana.emit("room:kick", guest.selfId);
 
-    await kicked;
+      await kicked;
 
-    expect(await left).toBe(guest.selfId);
-    expect(hostKicked).toBe(false);
-  });
+      expect(await left).toBe(guest.selfId);
+      expect(hostKicked).toBe(false);
+    });
 
-  it("mantém o participante ao reconectar com o token", async () => {
-    const ana = await connect();
-    const bia = await connect();
-    const code = await createRoom(ana);
+    it("mantém o participante ao reconectar com o token", async () => {
+      const ana = await connect();
+      const bia = await connect();
 
-    const first = await joinOk(ana, code, "Ana");
-    await joinOk(bia, code, "Bia");
+      const first = await joinOk(ana, "Ana");
+      await joinOk(bia, "Bia");
 
-    let leftCount = 0;
-    bia.on("participant:left", () => leftCount++);
+      let leftCount = 0;
+      bia.on("participant:left", () => leftCount++);
 
-    const offline = nextEvent(bia, "participant:updated");
-    ana.disconnect();
-    expect(await offline).toMatchObject({ id: first.selfId, connected: false });
+      const offline = nextEvent(bia, "participant:updated");
+      ana.disconnect();
+      expect(await offline).toMatchObject({
+        id: first.selfId,
+        connected: false,
+      });
 
-    const online = nextEvent(bia, "participant:updated");
-    const again = await connect();
-    const second = (await join(
-      again,
-      code,
-      "Ana",
-      first.reconnectToken
-    )) as JoinOk;
+      const online = nextEvent(bia, "participant:updated");
+      const second = (await join(
+        await connect(),
+        "Ana",
+        first.reconnectToken
+      )) as JoinOk;
 
-    expect(second.selfId).toBe(first.selfId);
-    expect(await online).toMatchObject({ id: first.selfId, connected: true });
+      expect(second.selfId).toBe(first.selfId);
+      expect(await online).toMatchObject({ id: first.selfId, connected: true });
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(leftCount).toBe(0);
-  });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(leftCount).toBe(0);
+    });
 
-  it("remove quem não volta dentro do prazo", async () => {
-    const ana = await connect();
-    const bia = await connect();
-    const code = await createRoom(ana);
+    it("remove quem não volta dentro do prazo", async () => {
+      const ana = await connect();
+      const bia = await connect();
 
-    const self = await joinOk(ana, code, "Ana");
-    await joinOk(bia, code, "Bia");
+      const self = await joinOk(ana, "Ana");
+      await joinOk(bia, "Bia");
 
-    const left = nextEvent(bia, "participant:left");
-    ana.disconnect();
+      const left = nextEvent(bia, "participant:left");
+      ana.disconnect();
 
-    expect(await left).toBe(self.selfId);
+      expect(await left).toBe(self.selfId);
+    });
+
+    it("continua aceitando entradas depois de ficar vazia", async () => {
+      const ana = await connect();
+
+      await joinOk(ana, "Ana");
+      ana.emit("room:leave");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect((await join(ana, "Ana")).ok).toBe(true);
+    });
   });
 
   describe("chat", () => {
@@ -257,15 +340,14 @@ describe("servidor do Roomly", () => {
     const twoPeople = async () => {
       const ana = await connect();
       const bia = await connect();
-      const code = await createRoom(ana);
-      const anaJoin = await joinOk(ana, code, "Ana");
-      const biaJoin = await joinOk(bia, code, "Bia");
+      const anaJoin = await joinOk(ana, "Ana");
+      const biaJoin = await joinOk(bia, "Bia");
 
-      return { ana, bia, code, anaJoin, biaJoin };
+      return { ana, bia, anaJoin, biaJoin };
     };
 
     it("entrega a mensagem a todos com autor e horário", async () => {
-      const { ana, bia, anaJoin } = await twoPeople();
+      const { ana, bia } = await twoPeople();
       const received = nextEvent(bia, "chat:message");
       const echoed = nextEvent(ana, "chat:message");
 
@@ -273,11 +355,7 @@ describe("servidor do Roomly", () => {
 
       const message = await received;
 
-      expect(message).toMatchObject({
-        text: "oi",
-        authorId: anaJoin.selfId,
-        authorName: "Ana",
-      });
+      expect(message).toMatchObject({ text: "oi", authorName: "Ana" });
       expect(message.createdAt).toBeGreaterThan(0);
       expect(await echoed).toEqual(message);
     });
@@ -311,18 +389,6 @@ describe("servidor do Roomly", () => {
       expect(responses[10]).toEqual({ ok: false, error: "rate-limited" });
     });
 
-    it("mostra o histórico a quem entra depois", async () => {
-      const { ana, code } = await twoPeople();
-
-      await send(ana, { text: "primeira" });
-
-      const late = await joinOk(await connect(), code, "Caio");
-
-      expect(late.messages.map((message) => message.text)).toEqual([
-        "primeira",
-      ]);
-    });
-
     it("guarda um resumo da mensagem respondida", async () => {
       const { ana, bia } = await twoPeople();
       const first = nextEvent(bia, "chat:message");
@@ -341,8 +407,8 @@ describe("servidor do Roomly", () => {
       });
     });
 
-    it("alterna reações e ignora emoji fora da lista", async () => {
-      const { ana, bia, biaJoin } = await twoPeople();
+    it("alterna reações pelo nome e ignora emoji fora da lista", async () => {
+      const { ana, bia } = await twoPeople();
       const first = nextEvent(bia, "chat:message");
 
       await send(ana, { text: "oi" });
@@ -354,7 +420,7 @@ describe("servidor do Roomly", () => {
       bia.emit("chat:react", { messageId, emoji: REACTION_EMOJIS[0] });
 
       expect((await added).reactions).toEqual({
-        [REACTION_EMOJIS[0]]: [biaJoin.selfId],
+        [REACTION_EMOJIS[0]]: ["Bia"],
       });
 
       const removed = nextEvent(ana, "chat:updated");
@@ -381,19 +447,20 @@ describe("servidor do Roomly", () => {
       expect(echoed).toBe(false);
     });
 
-    it("salva e serve a imagem com o tipo detectado", async () => {
+    it("salva e serve a imagem só para quem tem sessão", async () => {
       const { ana, bia } = await twoPeople();
       const received = nextEvent(bia, "chat:message");
 
       expect(await send(ana, { text: "", image: png })).toEqual({ ok: true });
 
       const { imageUrl } = await received;
-      const response = await fetch(`${url}${imageUrl}`);
+      const response = await fetch(`${url}${imageUrl}`, { headers: { cookie } });
 
       expect(response.status).toBe(200);
       expect(response.headers.get("content-type")).toBe("image/png");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(Buffer.from(await response.arrayBuffer()).equals(png)).toBe(true);
+      expect((await fetch(`${url}${imageUrl}`)).status).toBe(404);
     });
 
     it("recusa arquivos que não são imagem", async () => {
@@ -416,42 +483,90 @@ describe("servidor do Roomly", () => {
       });
     });
 
-    it("apaga mensagens e imagens junto com a sala", async () => {
-      const { ana, bia, code } = await twoPeople();
+    it("não serve imagem inexistente nem caminhos de fora da pasta", async () => {
+      const get = (path: string) =>
+        fetch(`${url}/chat-images/${path}`, { headers: { cookie } });
+
+      expect((await get("nao-existe")).status).toBe(404);
+      expect((await get("..%2Froomly.db")).status).toBe(404);
+    });
+
+    it("não entrega histórico a quem não entrou", async () => {
+      const { ana } = await twoPeople();
+      const fora = await connect();
+      let answered = false;
+
+      await send(ana, { text: "segredo" });
+      fora.emit("chat:history", "qualquer", () => (answered = true));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(answered).toBe(false);
+    });
+
+    it("mantém mensagens, reações e imagens depois de reiniciar o servidor", async () => {
+      const { ana, bia } = await twoPeople();
       const received = nextEvent(bia, "chat:message");
 
-      await send(ana, { text: "", image: png });
+      await send(ana, { text: "guardada", image: png });
 
-      const { imageUrl } = await received;
+      const { id, imageUrl } = await received;
+      const reacted = nextEvent(ana, "chat:updated");
 
-      ana.emit("room:leave");
-      bia.emit("room:leave");
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      bia.emit("chat:react", { messageId: id, emoji: REACTION_EMOJIS[1] });
+      await reacted;
 
-      expect((await fetch(`${url}${imageUrl}`)).status).toBe(404);
-      expect(await join(ana, code, "Ana")).toEqual({
-        ok: false,
-        error: "not-found",
+      clients.forEach((client) => client.disconnect());
+      await server.close();
+      await startServer();
+
+      const { messages } = await joinOk(await connect(), "Ana");
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        id,
+        text: "guardada",
+        authorName: "Ana",
+        reactions: { [REACTION_EMOJIS[1]]: ["Bia"] },
       });
+
+      const image = await fetch(`${url}${imageUrl}`, { headers: { cookie } });
+
+      expect(image.status).toBe(200);
     });
 
-    it("não serve imagem inexistente", async () => {
-      expect((await fetch(`${url}/chat-images/nao-existe`)).status).toBe(404);
-    });
-  });
+    it("entrega o histórico em páginas", async () => {
+      await server.close();
 
-  it("apaga a sala depois que fica vazia", async () => {
-    const ana = await connect();
-    const code = await createRoom(ana);
+      const seed = new ChatStore(dataDir);
 
-    await joinOk(ana, code, "Ana");
-    ana.emit("room:leave");
+      // Trocar de autor a cada 10 mensagens evita o limite de envio por pessoa.
+      for (let i = 0; i < CHAT_PAGE_SIZE + 5; i++) {
+        seed.send(`Pessoa ${Math.floor(i / 10)}`, { text: `m${i}` });
+      }
 
-    await new Promise((resolve) => setTimeout(resolve, 150));
+      seed.close();
+      await startServer();
 
-    expect(await join(ana, code, "Ana")).toEqual({
-      ok: false,
-      error: "not-found",
+      const client = await connect();
+      const { messages, hasMoreMessages } = await joinOk(client, "Ana");
+
+      expect(messages).toHaveLength(CHAT_PAGE_SIZE);
+      expect(messages[0].text).toBe("m5");
+      expect(messages.at(-1)?.text).toBe(`m${CHAT_PAGE_SIZE + 4}`);
+      expect(hasMoreMessages).toBe(true);
+
+      const older = await new Promise<ChatPage>((resolve) =>
+        client.emit("chat:history", messages[0].id, resolve)
+      );
+
+      expect(older.messages.map((message) => message.text)).toEqual([
+        "m0",
+        "m1",
+        "m2",
+        "m3",
+        "m4",
+      ]);
+      expect(older.hasMore).toBe(false);
     });
   });
 });

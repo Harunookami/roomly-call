@@ -7,7 +7,7 @@ import { MessageText } from "./MessageText";
 
 type ChatMessageItemProps = {
     message: ChatMessage;
-    selfId: string | null;
+    selfName: string;
     // Mensagem seguida do mesmo autor: não repete avatar e nome.
     compacta: boolean;
     onReply: (message: ChatMessage) => void;
@@ -25,7 +25,7 @@ function formatarHora(timestamp: number) {
     });
 }
 
-export function ChatMessageItem({ message, selfId, compacta, onReply, onReact, onJumpTo, onImageLoad }: ChatMessageItemProps) {
+export function ChatMessageItem({ message, selfName, compacta, onReply, onReact, onJumpTo, onImageLoad }: ChatMessageItemProps) {
     const [escolhendoEmoji, setEscolhendoEmoji] = useState(false);
 
     const reacoes = REACTION_EMOJIS.filter((emoji) => message.reactions[emoji]);
@@ -74,7 +74,7 @@ export function ChatMessageItem({ message, selfId, compacta, onReply, onReact, o
                     <div className="mt-1 flex flex-wrap gap-1">
                         {reacoes.map((emoji) => {
                             const quem = message.reactions[emoji];
-                            const minha = selfId !== null && quem.includes(selfId);
+                            const minha = quem.includes(selfName);
 
                             return (
                                 <button

@@ -1,5 +1,6 @@
 export const MAX_MESSAGE_LENGTH = 2000;
 export const MAX_IMAGE_BYTES = 1_000_000;
+export const CHAT_PAGE_SIZE = 100;
 export const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🎉"];
 
 export type ChatReply = {
@@ -8,14 +9,15 @@ export type ChatReply = {
   text: string;
 };
 
+// A identidade no chat é o nome, porque ela precisa continuar valendo depois que a
+// pessoa sai e volta. Só quem tem a senha da sala consegue escrever.
 export type ChatMessage = {
   id: string;
-  authorId: string;
   authorName: string;
   text: string;
   imageUrl: string | null;
   replyTo: ChatReply | null;
-  // Emoji -> ids de quem reagiu.
+  // Emoji -> nomes de quem reagiu.
   reactions: Record<string, string[]>;
   createdAt: number;
 };
@@ -38,3 +40,8 @@ export type ChatSendError =
 export type ChatSendResponse =
   | { ok: true }
   | { ok: false; error: ChatSendError };
+
+export type ChatPage = {
+  messages: ChatMessage[];
+  hasMore: boolean;
+};

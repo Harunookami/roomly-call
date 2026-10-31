@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { Check, Copy, Volume2 } from "lucide-react";
 
-type HeaderProps = {
-    codigoSala: string;
-}
+import { ROOM_NAME } from "../../types/Room";
 
-export function Header({ codigoSala }: HeaderProps) {
+export function Header() {
     const [copiado, setCopiado] = useState(false);
 
     const handleCopiarLink = async () => {
@@ -22,7 +20,7 @@ export function Header({ codigoSala }: HeaderProps) {
         <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-black/30 px-4">
             <p className="flex min-w-0 items-center gap-2 font-semibold">
                 <Volume2 size={20} className="shrink-0 text-slate-400" />
-                <span className="truncate">Sala {codigoSala}</span>
+                <span className="truncate">{ROOM_NAME}</span>
             </p>
 
             <button
@@ -31,7 +29,7 @@ export function Header({ codigoSala }: HeaderProps) {
                 title="Copiar link da sala"
             >
                 {copiado ? <Check size={16} /> : <Copy size={16} />}
-                <span aria-live="polite">{copiado ? "Link copiado" : "Convidar"}</span>
+                <span aria-live="polite">{copiado ? "Link copiado" : "Copiar link"}</span>
             </button>
         </header>
     )

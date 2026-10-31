@@ -41,6 +41,7 @@ export type RoomState = {
   preferences: Preferences;
   notice: string | null;
   messages: ChatMessage[];
+  hasMoreMessages: boolean;
   typingIds: string[];
   unreadCount: number;
 };
@@ -61,6 +62,7 @@ function createInitialState(): RoomState {
     preferences: loadPreferences(),
     notice: null,
     messages: [],
+    hasMoreMessages: false,
     typingIds: [],
     unreadCount: 0,
   };
@@ -123,8 +125,7 @@ function cameraConstraints(deviceId: string): MediaStreamConstraints {
 
 // Concentra o ciclo de vida da chamada fora do React: a tela só assina o estado.
 export class RoomClient {
-  private code: string;
-  private name: string;
+  readonly name: string;
   private state = createInitialState();
   private listeners = new Set<() => void>();
   private cleanups: (() => void)[] = [];
@@ -147,8 +148,7 @@ export class RoomClient {
   private lastTypingSignalAt = 0;
   private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  constructor(code: string, name: string) {
-    this.code = code;
+  constructor(name: string) {
     this.name = name;
   }
 
@@ -290,6 +290,27 @@ export class RoomClient {
       return response.ok ? null : response.error;
     } catch {
       return "unavailable";
+    }
+  }
+
+  async loadOlderMessages() {
+    const oldest = this.state.messages[0];
+
+    if (!oldest || !socket.connected) {
+      return;
+    }
+
+    try {
+      const { messages, hasMore } = await socket
+        .timeout(8000)
+        .emitWithAck("chat:history", oldest.id);
+
+      this.setState({
+        messages: [...messages, ...this.state.messages],
+        hasMoreMessages: hasMore,
+      });
+    } catch {
+      this.setState({ notice: "Não foi possível carregar as mensagens antigas." });
     }
   }
 
@@ -576,7 +597,6 @@ export class RoomClient {
 
     try {
       response = await socket.timeout(8000).emitWithAck("room:join", {
-        code: this.code,
         name: this.name,
         reconnectToken: this.reconnectToken,
       });
@@ -611,6 +631,7 @@ export class RoomClient {
       selfId: response.selfId,
       participants: response.participants,
       messages: response.messages,
+      hasMoreMessages: response.hasMoreMessages,
       // Descarta o áudio e o vídeo de quem saiu enquanto estávamos sem conexão.
       remoteStreams: Object.fromEntries(
         Object.entries(this.state.remoteStreams).filter(([peerId]) =>
@@ -728,10 +749,15 @@ export class RoomClient {
   }
 
   private handleChatMessage(message: ChatMessage) {
-    const fromOther = message.authorId !== this.state.selfId;
+    const fromOther = message.authorName !== this.name;
     const seen = this.chatVisible && !document.hidden;
 
-    this.setTyping(message.authorId, false);
+    for (const participant of this.state.participants) {
+      if (participant.name === message.authorName) {
+        this.setTyping(participant.id, false);
+      }
+    }
+
     this.setState({
       messages: [...this.state.messages, message],
       unreadCount: this.state.unreadCount + (fromOther && !seen ? 1 : 0),
