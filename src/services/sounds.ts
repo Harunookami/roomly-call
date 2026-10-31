@@ -6,7 +6,8 @@ export type SoundName =
   | "mute"
   | "unmute"
   | "deafen"
-  | "undeafen";
+  | "undeafen"
+  | "message";
 
 const NOTE_SECONDS = 0.09;
 const VOLUME = 0.08;
@@ -19,6 +20,7 @@ const NOTES: Record<SoundName, number[]> = {
   unmute: [587],
   deafen: [392, 294],
   undeafen: [294, 392],
+  message: [880, 660],
 };
 
 export function playSound(name: SoundName) {

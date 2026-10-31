@@ -1,3 +1,8 @@
+import type {
+  ChatMessage,
+  ChatSendError,
+  ChatSendRequest,
+} from "../types/Chat";
 import type { MediaState, Participant } from "../types/Participant";
 import type { JoinError, JoinResponse } from "../types/Room";
 import { setOutputDevice } from "./audioContext";
@@ -35,6 +40,9 @@ export type RoomState = {
   volumes: Record<string, number>;
   preferences: Preferences;
   notice: string | null;
+  messages: ChatMessage[];
+  typingIds: string[];
+  unreadCount: number;
 };
 
 function createInitialState(): RoomState {
@@ -52,8 +60,15 @@ function createInitialState(): RoomState {
     volumes: {},
     preferences: loadPreferences(),
     notice: null,
+    messages: [],
+    typingIds: [],
+    unreadCount: 0,
   };
 }
+
+const TYPING_SIGNAL_INTERVAL_MS = 2000;
+// Maior que o intervalo de envio, para o aviso não piscar enquanto a pessoa digita.
+const TYPING_EXPIRY_MS = 4000;
 
 // Solta o botão com um pequeno atraso para não cortar o fim da fala.
 const PUSH_TO_TALK_RELEASE_MS = 150;
@@ -128,6 +143,9 @@ export class RoomClient {
   private speaking = new SpeakingDetector((speakingIds) =>
     this.setState({ speakingIds })
   );
+  private chatVisible = false;
+  private lastTypingSignalAt = 0;
+  private typingTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(code: string, name: string) {
     this.code = code;
@@ -184,14 +202,31 @@ export class RoomClient {
         remoteStreams,
       });
       this.mesh?.removePeer(participantId);
+      this.setTyping(participantId, false);
       this.playCallSound("leave");
     });
+    this.on("chat:message", (message: ChatMessage) =>
+      this.handleChatMessage(message)
+    );
+    this.on("chat:updated", (message: ChatMessage) => {
+      this.setState({
+        messages: this.state.messages.map((current) =>
+          current.id === message.id ? message : current
+        ),
+      });
+    });
+    this.on(
+      "chat:typing",
+      ({ participantId, typing }: { participantId: string; typing: boolean }) =>
+        this.setTyping(participantId, typing)
+    );
     this.on("signal", ({ from, data }: { from: string; data: unknown }) => {
       this.mesh?.handleSignal(from, data);
     });
     this.on("room:kicked", () => {
       this.reconnectToken = undefined;
       this.releaseMedia();
+      this.clearTypingTimers();
       this.state = createInitialState();
       this.setState({ status: "kicked" });
     });
@@ -210,6 +245,7 @@ export class RoomClient {
       this.handlePushToTalkUp(event as KeyboardEvent)
     );
     this.listen(window, "blur", () => this.releasePushToTalk());
+    this.listen(document, "visibilitychange", () => this.markChatReadIfSeen());
 
     if (this.state.preferences.speakerId) {
       setOutputDevice(this.state.preferences.speakerId);
@@ -233,7 +269,55 @@ export class RoomClient {
 
     this.reconnectToken = undefined;
     this.releaseMedia();
+    this.clearTypingTimers();
     this.state = createInitialState();
+  }
+
+  async sendMessage(
+    request: ChatSendRequest
+  ): Promise<ChatSendError | "unavailable" | null> {
+    if (!socket.connected) {
+      return "unavailable";
+    }
+
+    this.notifyTyping(false);
+
+    try {
+      const response = await socket
+        .timeout(request.image ? 30_000 : 8000)
+        .emitWithAck("chat:send", request);
+
+      return response.ok ? null : response.error;
+    } catch {
+      return "unavailable";
+    }
+  }
+
+  toggleReaction(messageId: string, emoji: string) {
+    socket.emit("chat:react", { messageId, emoji });
+  }
+
+  notifyTyping(typing: boolean) {
+    const now = Date.now();
+
+    if (!typing) {
+      if (this.lastTypingSignalAt > 0) {
+        socket.emit("chat:typing", false);
+      }
+
+      this.lastTypingSignalAt = 0;
+      return;
+    }
+
+    if (now - this.lastTypingSignalAt >= TYPING_SIGNAL_INTERVAL_MS) {
+      this.lastTypingSignalAt = now;
+      socket.emit("chat:typing", true);
+    }
+  }
+
+  setChatVisible(visible: boolean) {
+    this.chatVisible = visible;
+    this.markChatReadIfSeen();
   }
 
   async toggleMic() {
@@ -526,6 +610,7 @@ export class RoomClient {
       status: "joined",
       selfId: response.selfId,
       participants: response.participants,
+      messages: response.messages,
       // Descarta o áudio e o vídeo de quem saiu enquanto estávamos sem conexão.
       remoteStreams: Object.fromEntries(
         Object.entries(this.state.remoteStreams).filter(([peerId]) =>
@@ -640,6 +725,52 @@ export class RoomClient {
     } finally {
       this.pendingDevices.delete(device);
     }
+  }
+
+  private handleChatMessage(message: ChatMessage) {
+    const fromOther = message.authorId !== this.state.selfId;
+    const seen = this.chatVisible && !document.hidden;
+
+    this.setTyping(message.authorId, false);
+    this.setState({
+      messages: [...this.state.messages, message],
+      unreadCount: this.state.unreadCount + (fromOther && !seen ? 1 : 0),
+    });
+
+    if (fromOther && !seen) {
+      this.playCallSound("message");
+    }
+  }
+
+  private markChatReadIfSeen() {
+    if (this.chatVisible && !document.hidden && this.state.unreadCount > 0) {
+      this.setState({ unreadCount: 0 });
+    }
+  }
+
+  private setTyping(participantId: string, typing: boolean) {
+    clearTimeout(this.typingTimers.get(participantId));
+    this.typingTimers.delete(participantId);
+
+    if (typing) {
+      this.typingTimers.set(
+        participantId,
+        setTimeout(() => this.setTyping(participantId, false), TYPING_EXPIRY_MS)
+      );
+    }
+
+    const others = this.state.typingIds.filter((id) => id !== participantId);
+    const typingIds = typing ? [...others, participantId] : others;
+
+    if (typingIds.length !== this.state.typingIds.length) {
+      this.setState({ typingIds });
+    }
+  }
+
+  private clearTypingTimers() {
+    this.typingTimers.forEach((timer) => clearTimeout(timer));
+    this.typingTimers.clear();
+    this.lastTypingSignalAt = 0;
   }
 
   private applyMicState() {

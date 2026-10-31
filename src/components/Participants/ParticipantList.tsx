@@ -16,24 +16,18 @@ export function ParticipantList({ participants, selfId, speakingIds, volumes, on
     );
 
     return (
-        <>
-            <h2 className="mb-2 px-2 text-xs font-semibold tracking-wide text-slate-400 uppercase">
-                Participantes ({participants.length})
-            </h2>
-
-            <ul className="flex flex-col gap-1">
-                {participants.map((participant) => (
-                    <Participant
-                        key={participant.id}
-                        participant={participant}
-                        isSelf={participant.id === selfId}
-                        speaking={speakingIds.includes(participant.id)}
-                        volume={volumes[participant.id] ?? 1}
-                        onVolumeChange={(volume) => onVolumeChange(participant.id, volume)}
-                        onKick={souAnfitriao ? () => onKick(participant.id) : undefined}
-                    />
-                ))}
-            </ul>
-        </>
+        <ul className="flex flex-col gap-1">
+            {participants.map((participant) => (
+                <Participant
+                    key={participant.id}
+                    participant={participant}
+                    isSelf={participant.id === selfId}
+                    speaking={speakingIds.includes(participant.id)}
+                    volume={volumes[participant.id] ?? 1}
+                    onVolumeChange={(volume) => onVolumeChange(participant.id, volume)}
+                    onKick={souAnfitriao ? () => onKick(participant.id) : undefined}
+                />
+            ))}
+        </ul>
     )
 }

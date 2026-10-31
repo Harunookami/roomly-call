@@ -16,7 +16,7 @@ export function ChannelSidebar({ codigoSala, participants, selfId, speakingIds, 
     const eu = participants.find((participant) => participant.id === selfId);
 
     return (
-        <aside className="hidden w-56 shrink-0 flex-col bg-sidebar lg:flex">
+        <aside className="hidden w-56 shrink-0 flex-col bg-sidebar xl:flex">
             <h1 className="flex h-14 shrink-0 items-center border-b border-black/30 px-4 font-bold tracking-tight">
                 Roomly
             </h1>

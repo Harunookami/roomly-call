@@ -44,6 +44,7 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 - [x] Indicador de quem está falando e sons de entrada, saída e mudo;
 - [x] Ensurdecer, volume individual e apertar para falar;
 - [x] Escolha de resolução e taxa de quadros da tela;
+- [x] Chat de texto com respostas, reações, imagens e aviso de digitação;
 - [x] Lista de participantes, com remoção feita pelo anfitrião;
 - [x] Reconexão automática sem perder o lugar na sala;
 - [x] Suporte a STUN/TURN por configuração;
@@ -81,6 +82,7 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 ```bash
 server
 ├── app.ts          # Rotas HTTP e eventos do Socket.IO
+├── chat.ts         # Mensagens, reações e imagens do chat
 ├── rooms.ts        # Regras das salas e dos participantes
 ├── index.ts        # Configuração e inicialização
 └── app.test.ts
@@ -88,6 +90,7 @@ server
 src
 ├── components
 │   ├── CallControls
+│   ├── Chat
 │   ├── Dialogs
 │   ├── Header
 │   ├── Media
@@ -97,6 +100,7 @@ src
 │   └── Stage
 │
 ├── hooks
+│   ├── useMediaQuery.ts
 │   └── useRoom.ts
 │
 ├── pages
@@ -109,6 +113,7 @@ src
 │
 ├── services
 │   ├── audioContext.ts
+│   ├── chatImage.ts   # Redução das imagens antes do envio
 │   ├── preferences.ts # Dispositivos e opções salvas no navegador
 │   ├── roomClient.ts  # Ciclo de vida da chamada
 │   ├── socket.ts      # Conexão com o servidor
@@ -191,7 +196,7 @@ Também é possível usar o `Dockerfile`. As variáveis de ambiente estão em `.
 
 - **HTTPS é obrigatório:** fora do `localhost`, o navegador só libera microfone, câmera e tela em HTTPS. Isso também vale para testes pela rede local.
 - **Configure um servidor TURN:** só com STUN, pessoas em redes restritivas (empresas, 4G) podem não conseguir se conectar.
-- **Rode uma única instância:** as salas ficam na memória do servidor e se perdem quando ele reinicia.
+- **Rode uma única instância:** as salas, as mensagens e as imagens do chat ficam na memória do servidor. Elas se perdem quando ele reinicia ou quando a sala fica vazia por um minuto.
 
 ---
 
@@ -240,7 +245,7 @@ Durante o desenvolvimento serão explorados:
                    (salas, participantes e sinalização)
 ```
 
-A mídia vai diretamente entre os navegadores, em malha: cada participante mantém uma conexão com cada um dos outros. O servidor só organiza as salas e repassa as mensagens que abrem essas conexões. Por isso as salas são limitadas a 8 pessoas.
+A mídia vai diretamente entre os navegadores, em malha: cada participante mantém uma conexão com cada um dos outros. O servidor organiza as salas, repassa as mensagens que abrem essas conexões e guarda o chat. Como cada pessoa envia sua mídia para todas as outras, as salas são limitadas a 8 pessoas.
 
 ---
 

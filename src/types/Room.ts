@@ -1,3 +1,8 @@
+import type {
+  ChatMessage,
+  ChatSendRequest,
+  ChatSendResponse,
+} from "./Chat.ts";
 import type { MediaState, Participant } from "./Participant.ts";
 
 export const MAX_PARTICIPANTS = 8;
@@ -23,6 +28,7 @@ export type JoinResponse =
       selfId: string;
       reconnectToken: string;
       participants: Participant[];
+      messages: ChatMessage[];
       iceServers: IceServer[];
     }
   | { ok: false; error: JoinError };
@@ -37,6 +43,12 @@ export type ClientToServerEvents = {
   "room:kick": (participantId: string) => void;
   "media:update": (media: MediaState) => void;
   signal: (message: { to: string; data: unknown }) => void;
+  "chat:send": (
+    request: ChatSendRequest,
+    ack: (response: ChatSendResponse) => void
+  ) => void;
+  "chat:typing": (typing: boolean) => void;
+  "chat:react": (reaction: { messageId: string; emoji: string }) => void;
 };
 
 export type ServerToClientEvents = {
@@ -45,4 +57,7 @@ export type ServerToClientEvents = {
   "participant:left": (participantId: string) => void;
   "room:kicked": () => void;
   signal: (message: { from: string; data: unknown }) => void;
+  "chat:message": (message: ChatMessage) => void;
+  "chat:updated": (message: ChatMessage) => void;
+  "chat:typing": (status: { participantId: string; typing: boolean }) => void;
 };

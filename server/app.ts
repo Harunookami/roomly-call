@@ -5,11 +5,13 @@ import { join as joinPath } from "node:path";
 import express from "express";
 import { Server, type Socket } from "socket.io";
 
+import { MAX_IMAGE_BYTES } from "../src/types/Chat.ts";
 import type {
   ClientToServerEvents,
   IceServer,
   ServerToClientEvents,
 } from "../src/types/Room.ts";
+import { ChatStore } from "./chat.ts";
 import { normalizeRoomCode, RoomStore } from "./rooms.ts";
 
 type SocketData = {
@@ -40,9 +42,28 @@ export function createRoomlyServer({
   staticDir,
 }: RoomlyServerOptions) {
   const app = express();
+  const chat = new ChatStore();
 
   app.get("/health", (_request, response) => {
     response.json({ status: "ok" });
+  });
+
+  app.get("/chat-images/:id", (request, response) => {
+    const image = chat.getImage(request.params.id);
+
+    if (!image) {
+      response.sendStatus(404);
+      return;
+    }
+
+    response
+      .set({
+        "Content-Type": image.contentType,
+        "Content-Security-Policy": "default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": "private, max-age=3600",
+      })
+      .send(image.data);
   });
 
   if (staticDir && existsSync(joinPath(staticDir, "index.html"))) {
@@ -58,7 +79,10 @@ export function createRoomlyServer({
     ServerToClientEvents,
     Record<string, never>,
     SocketData
-  >(httpServer, { maxHttpBufferSize: 256 * 1024 });
+  >(httpServer, {
+    // Comporta uma imagem do chat, que cresce em base64 quando vai por polling.
+    maxHttpBufferSize: 1.5 * MAX_IMAGE_BYTES,
+  });
 
   const store = new RoomStore();
   const removalTimers = new Map<string, NodeJS.Timeout>();
@@ -78,6 +102,7 @@ export function createRoomlyServer({
 
         if (store.isEmpty(code)) {
           store.deleteRoom(code);
+          chat.deleteRoom(code);
         }
       }, emptyRoomTtlMs)
     );
@@ -171,6 +196,7 @@ export function createRoomlyServer({
         selfId: participant.id,
         reconnectToken,
         participants: result.participants,
+        messages: chat.getMessages(code),
         iceServers,
       });
     });
@@ -237,6 +263,64 @@ export function createRoomlyServer({
           from: participantId,
           data: message.data,
         });
+      }
+    });
+
+    socket.on("chat:send", (request, ack) => {
+      if (typeof ack !== "function") {
+        return;
+      }
+
+      const { code, participantId } = socket.data;
+      const member =
+        code && participantId ? store.getMember(code, participantId) : null;
+
+      if (!code || !member) {
+        ack({ ok: false, error: "not-in-room" });
+        return;
+      }
+
+      const result = chat.send(
+        code,
+        { id: member.participant.id, name: member.participant.name },
+        request
+      );
+
+      if (!result.ok) {
+        ack(result);
+        return;
+      }
+
+      io.to(code).emit("chat:message", result.message);
+      ack({ ok: true });
+    });
+
+    socket.on("chat:typing", (typing) => {
+      const { code, participantId } = socket.data;
+
+      if (code && participantId) {
+        socket
+          .to(code)
+          .emit("chat:typing", { participantId, typing: typing === true });
+      }
+    });
+
+    socket.on("chat:react", (reaction) => {
+      const { code, participantId } = socket.data;
+
+      if (!code || !participantId) {
+        return;
+      }
+
+      const message = chat.toggleReaction(
+        code,
+        participantId,
+        reaction?.messageId,
+        reaction?.emoji
+      );
+
+      if (message) {
+        io.to(code).emit("chat:updated", message);
       }
     });
 

@@ -4,6 +4,13 @@ import { io, type Socket } from "socket.io-client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  MAX_IMAGE_BYTES,
+  MAX_MESSAGE_LENGTH,
+  REACTION_EMOJIS,
+  type ChatSendRequest,
+  type ChatSendResponse,
+} from "../src/types/Chat.ts";
+import {
   MAX_PARTICIPANTS,
   type ClientToServerEvents,
   type JoinResponse,
@@ -230,6 +237,207 @@ describe("servidor do Roomly", () => {
     ana.disconnect();
 
     expect(await left).toBe(self.selfId);
+  });
+
+  describe("chat", () => {
+    // Menor PNG válido: 1x1 transparente.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64"
+    );
+
+    const send = (
+      client: Client,
+      request: { text: string; replyToId?: string; image?: unknown }
+    ) =>
+      new Promise<ChatSendResponse>((resolve) =>
+        client.emit("chat:send", request as ChatSendRequest, resolve)
+      );
+
+    const twoPeople = async () => {
+      const ana = await connect();
+      const bia = await connect();
+      const code = await createRoom(ana);
+      const anaJoin = await joinOk(ana, code, "Ana");
+      const biaJoin = await joinOk(bia, code, "Bia");
+
+      return { ana, bia, code, anaJoin, biaJoin };
+    };
+
+    it("entrega a mensagem a todos com autor e horário", async () => {
+      const { ana, bia, anaJoin } = await twoPeople();
+      const received = nextEvent(bia, "chat:message");
+      const echoed = nextEvent(ana, "chat:message");
+
+      expect(await send(ana, { text: "  oi  " })).toEqual({ ok: true });
+
+      const message = await received;
+
+      expect(message).toMatchObject({
+        text: "oi",
+        authorId: anaJoin.selfId,
+        authorName: "Ana",
+      });
+      expect(message.createdAt).toBeGreaterThan(0);
+      expect(await echoed).toEqual(message);
+    });
+
+    it("recusa mensagem vazia, longa demais ou de quem está fora", async () => {
+      const { ana } = await twoPeople();
+      const fora = await connect();
+
+      expect(await send(ana, { text: "   " })).toEqual({
+        ok: false,
+        error: "empty",
+      });
+      expect(
+        await send(ana, { text: "x".repeat(MAX_MESSAGE_LENGTH + 1) })
+      ).toEqual({ ok: false, error: "too-long" });
+      expect(await send(fora, { text: "oi" })).toEqual({
+        ok: false,
+        error: "not-in-room",
+      });
+    });
+
+    it("limita o envio em excesso", async () => {
+      const { ana } = await twoPeople();
+      const responses = [];
+
+      for (let i = 0; i < 11; i++) {
+        responses.push(await send(ana, { text: `mensagem ${i}` }));
+      }
+
+      expect(responses[9]).toEqual({ ok: true });
+      expect(responses[10]).toEqual({ ok: false, error: "rate-limited" });
+    });
+
+    it("mostra o histórico a quem entra depois", async () => {
+      const { ana, code } = await twoPeople();
+
+      await send(ana, { text: "primeira" });
+
+      const late = await joinOk(await connect(), code, "Caio");
+
+      expect(late.messages.map((message) => message.text)).toEqual([
+        "primeira",
+      ]);
+    });
+
+    it("guarda um resumo da mensagem respondida", async () => {
+      const { ana, bia } = await twoPeople();
+      const first = nextEvent(bia, "chat:message");
+
+      await send(ana, { text: "pergunta" });
+
+      const { id } = await first;
+      const second = nextEvent(ana, "chat:message");
+
+      await send(bia, { text: "resposta", replyToId: id });
+
+      expect((await second).replyTo).toEqual({
+        id,
+        authorName: "Ana",
+        text: "pergunta",
+      });
+    });
+
+    it("alterna reações e ignora emoji fora da lista", async () => {
+      const { ana, bia, biaJoin } = await twoPeople();
+      const first = nextEvent(bia, "chat:message");
+
+      await send(ana, { text: "oi" });
+
+      const { id: messageId } = await first;
+      const added = nextEvent(ana, "chat:updated");
+
+      bia.emit("chat:react", { messageId, emoji: "🖕" });
+      bia.emit("chat:react", { messageId, emoji: REACTION_EMOJIS[0] });
+
+      expect((await added).reactions).toEqual({
+        [REACTION_EMOJIS[0]]: [biaJoin.selfId],
+      });
+
+      const removed = nextEvent(ana, "chat:updated");
+
+      bia.emit("chat:react", { messageId, emoji: REACTION_EMOJIS[0] });
+
+      expect((await removed).reactions).toEqual({});
+    });
+
+    it("avisa os outros de quem está digitando, mas não a própria pessoa", async () => {
+      const { ana, bia, anaJoin } = await twoPeople();
+      let echoed = false;
+
+      ana.on("chat:typing", () => (echoed = true));
+
+      const typing = nextEvent(bia, "chat:typing");
+
+      ana.emit("chat:typing", true);
+
+      expect(await typing).toEqual({
+        participantId: anaJoin.selfId,
+        typing: true,
+      });
+      expect(echoed).toBe(false);
+    });
+
+    it("salva e serve a imagem com o tipo detectado", async () => {
+      const { ana, bia } = await twoPeople();
+      const received = nextEvent(bia, "chat:message");
+
+      expect(await send(ana, { text: "", image: png })).toEqual({ ok: true });
+
+      const { imageUrl } = await received;
+      const response = await fetch(`${url}${imageUrl}`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer()).equals(png)).toBe(true);
+    });
+
+    it("recusa arquivos que não são imagem", async () => {
+      const { ana } = await twoPeople();
+      const svg = Buffer.from("<svg onload='alert(1)'></svg>");
+
+      expect(await send(ana, { text: "", image: svg })).toEqual({
+        ok: false,
+        error: "invalid-image",
+      });
+    });
+
+    it("recusa imagem acima do limite", async () => {
+      const { ana } = await twoPeople();
+      const big = Buffer.concat([png, Buffer.alloc(MAX_IMAGE_BYTES)]);
+
+      expect(await send(ana, { text: "", image: big })).toEqual({
+        ok: false,
+        error: "image-too-large",
+      });
+    });
+
+    it("apaga mensagens e imagens junto com a sala", async () => {
+      const { ana, bia, code } = await twoPeople();
+      const received = nextEvent(bia, "chat:message");
+
+      await send(ana, { text: "", image: png });
+
+      const { imageUrl } = await received;
+
+      ana.emit("room:leave");
+      bia.emit("room:leave");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect((await fetch(`${url}${imageUrl}`)).status).toBe(404);
+      expect(await join(ana, code, "Ana")).toEqual({
+        ok: false,
+        error: "not-found",
+      });
+    });
+
+    it("não serve imagem inexistente", async () => {
+      expect((await fetch(`${url}/chat-images/nao-existe`)).status).toBe(404);
+    });
   });
 
   it("apaga a sala depois que fica vazia", async () => {

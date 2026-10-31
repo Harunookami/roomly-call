@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { X } from "lucide-react";
 
@@ -6,12 +6,15 @@ import { Header } from "../components/Header/Header";
 import type { SharedScreen } from "../components/ScreenShare/ScreenShare";
 import { ParticipantList } from "../components/Participants/ParticipantList";
 import { CallControls } from "../components/CallControls/CallControls";
+import { ChatPanel } from "../components/Chat/ChatPanel";
 import { ScreenShareDialog } from "../components/Dialogs/ScreenShareDialog";
 import { SettingsDialog } from "../components/Dialogs/SettingsDialog";
 import { RemoteAudio } from "../components/Media/RemoteAudio";
 import { ChannelSidebar } from "../components/Sidebar/ChannelSidebar";
+import { PanelTabs } from "../components/Sidebar/PanelTabs";
 import { ServerRail } from "../components/Sidebar/ServerRail";
 import { CallStage } from "../components/Stage/CallStage";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useRoom } from "../hooks/useRoom";
 import { keyLabel } from "../services/preferences";
 import type { RoomStatus } from "../services/roomClient";
@@ -94,11 +97,33 @@ function Lobby({ codigoSala, onEntrar }: { codigoSala: string; onEntrar: (nome: 
   );
 }
 
+// No celular cada aba ocupa a tela toda. No computador a chamada fica sempre
+// visível, e "chamada" equivale a mostrar o chat no painel lateral.
+type Aba = "chamada" | "chat" | "participantes";
+
 function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
   const { client, state } = useRoom(codigoSala, nome);
   const [audioBloqueado, setAudioBloqueado] = useState(false);
   const [dialogo, setDialogo] = useState<"settings" | "screen" | null>(null);
+  const [aba, setAba] = useState<Aba>("chamada");
   const navigate = useNavigate();
+  const telaGrande = useMediaQuery("(min-width: 1024px)");
+
+  const abaLateral = aba === "participantes" ? "participantes" : "chat";
+  const chatVisivel = abaLateral === "chat" && (telaGrande || aba === "chat");
+  const naoLidas = state.unreadCount;
+
+  useEffect(() => {
+    client.setChatVisible(chatVisivel);
+  }, [client, chatVisivel]);
+
+  useEffect(() => {
+    document.title = naoLidas > 0 ? `(${naoLidas}) Roomly` : "Roomly";
+
+    return () => {
+      document.title = "Roomly";
+    };
+  }, [naoLidas]);
 
   const handleAudioBloqueado = useCallback(() => setAudioBloqueado(true), []);
 
@@ -208,8 +233,20 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
           </button>
         )}
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-          <section className="flex shrink-0 flex-col p-4 lg:min-w-0 lg:flex-1 lg:shrink">
+        <PanelTabs<Aba>
+          className="flex lg:hidden"
+          label="Seções da sala"
+          active={aba}
+          onChange={setAba}
+          tabs={[
+            { id: "chamada", label: "Chamada" },
+            { id: "chat", label: "Chat", badge: naoLidas },
+            { id: "participantes", label: `Pessoas (${state.participants.length})` },
+          ]}
+        />
+
+        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+          <section className={`min-h-0 flex-1 flex-col overflow-y-auto p-4 lg:flex lg:min-w-0 ${aba === "chamada" ? "flex" : "hidden"}`}>
             <CallStage
               participants={state.participants}
               selfId={state.selfId}
@@ -244,15 +281,40 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
             </div>
           </section>
 
-          <aside className="shrink-0 border-t border-black/30 bg-sidebar p-2 lg:w-56 lg:overflow-y-auto lg:border-t-0">
-            <ParticipantList
-              participants={state.participants}
-              selfId={state.selfId}
-              speakingIds={state.speakingIds}
-              volumes={state.volumes}
-              onVolumeChange={(participantId, volume) => client.setVolume(participantId, volume)}
-              onKick={(participantId) => client.kick(participantId)}
+          <aside className={`min-h-0 flex-1 flex-col bg-sidebar lg:flex lg:w-80 lg:flex-none ${aba === "chamada" ? "hidden" : "flex"}`}>
+            <PanelTabs<"chat" | "participantes">
+              className="hidden lg:flex"
+              label="Painel lateral"
+              active={abaLateral}
+              onChange={setAba}
+              tabs={[
+                { id: "chat", label: "Chat", badge: naoLidas },
+                { id: "participantes", label: `Participantes (${state.participants.length})` },
+              ]}
             />
+
+            {/* O chat continua montado nas outras abas para não perder o rascunho. */}
+            <ChatPanel
+              client={client}
+              messages={state.messages}
+              participants={state.participants}
+              typingIds={state.typingIds}
+              selfId={state.selfId}
+              visivel={abaLateral === "chat"}
+            />
+
+            {abaLateral === "participantes" && (
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                <ParticipantList
+                  participants={state.participants}
+                  selfId={state.selfId}
+                  speakingIds={state.speakingIds}
+                  volumes={state.volumes}
+                  onVolumeChange={(participantId, volume) => client.setVolume(participantId, volume)}
+                  onKick={(participantId) => client.kick(participantId)}
+                />
+              </div>
+            )}
           </aside>
         </div>
       </div>
