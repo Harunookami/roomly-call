@@ -26,6 +26,11 @@ const DEFAULTS: Preferences = {
   screenFps: 30,
 };
 
+// KeyV vira "V" e Digit1 vira "1"; as demais teclas mantêm o nome do navegador.
+export function keyLabel(code: string) {
+  return code === "Space" ? "Espaço" : code.replace(/^(Key|Digit)/, "");
+}
+
 export function loadPreferences(): Preferences {
   try {
     return {

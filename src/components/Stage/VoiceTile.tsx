@@ -26,7 +26,7 @@ export function VoiceTile({ participant, isSelf, speaking, cameraStream, classNa
                     className={`absolute inset-0 h-full w-full object-cover ${isSelf ? "-scale-x-100" : ""}`}
                 />
             ) : (
-                <Avatar name={participant.name} className="size-[35%] max-h-20 max-w-20 min-h-8 min-w-8 text-xl" />
+                <Avatar name={participant.name} className="size-12 text-lg sm:size-16 sm:text-2xl" />
             )}
 
             <span className="absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-0.75rem)] items-center gap-1.5 rounded bg-black/70 px-2 py-0.5 text-xs">

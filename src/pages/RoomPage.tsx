@@ -3,11 +3,17 @@ import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { X } from "lucide-react";
 
 import { Header } from "../components/Header/Header";
-import { ScreenShare, type SharedScreen } from "../components/ScreenShare/ScreenShare";
+import type { SharedScreen } from "../components/ScreenShare/ScreenShare";
 import { ParticipantList } from "../components/Participants/ParticipantList";
 import { CallControls } from "../components/CallControls/CallControls";
+import { ScreenShareDialog } from "../components/Dialogs/ScreenShareDialog";
+import { SettingsDialog } from "../components/Dialogs/SettingsDialog";
 import { RemoteAudio } from "../components/Media/RemoteAudio";
+import { ChannelSidebar } from "../components/Sidebar/ChannelSidebar";
+import { ServerRail } from "../components/Sidebar/ServerRail";
+import { CallStage } from "../components/Stage/CallStage";
 import { useRoom } from "../hooks/useRoom";
+import { keyLabel } from "../services/preferences";
 import type { RoomStatus } from "../services/roomClient";
 import { loadUserName, saveUserName } from "../services/userName";
 import type { Participant } from "../types/Participant";
@@ -91,6 +97,7 @@ function Lobby({ codigoSala, onEntrar }: { codigoSala: string; onEntrar: (nome: 
 function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
   const { client, state } = useRoom(codigoSala, nome);
   const [audioBloqueado, setAudioBloqueado] = useState(false);
+  const [dialogo, setDialogo] = useState<"settings" | "screen" | null>(null);
   const navigate = useNavigate();
 
   const handleAudioBloqueado = useCallback(() => setAudioBloqueado(true), []);
@@ -156,70 +163,129 @@ function Chamada({ codigoSala, nome }: { codigoSala: string; nome: string }) {
     }
   }
 
+  const { preferences } = state;
+
   return (
-    <main className="flex h-dvh flex-col bg-[#080d18] text-white">
-      <Header codigoSala={codigoSala} />
+    <main className="flex h-dvh bg-stage text-white">
+      <ServerRail codigoSala={codigoSala} />
 
-      {state.status === "reconnecting" && (
-        <p className="bg-orange-500/20 px-4 py-2 text-center text-sm text-orange-200" role="status">
-          Conexão perdida. Tentando reconectar...
-        </p>
-      )}
+      <ChannelSidebar
+        codigoSala={codigoSala}
+        participants={state.participants}
+        selfId={state.selfId}
+        speakingIds={state.speakingIds}
+        reconectando={state.status === "reconnecting"}
+      />
 
-      {state.notice && (
-        <div className="flex items-center justify-center gap-2 bg-slate-800 px-4 py-2 text-sm" role="status">
-          <span>{state.notice}</span>
-          <button
-            className="cursor-pointer rounded p-1 hover:bg-slate-700"
-            onClick={() => client.dismissNotice()}
-            aria-label="Fechar aviso"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Header codigoSala={codigoSala} />
 
-      {audioBloqueado && (
-        <button
-          className="cursor-pointer bg-blue-500 px-4 py-2 text-sm hover:bg-blue-600"
-          onClick={handleAtivarAudio}
-        >
-          O navegador bloqueou o som da chamada. Clique para ativar.
-        </button>
-      )}
+        {state.status === "reconnecting" && (
+          <p className="bg-orange-500/20 px-4 py-2 text-center text-sm text-orange-200" role="status">
+            Conexão perdida. Tentando reconectar...
+          </p>
+        )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        <section className="flex shrink-0 flex-col p-4 lg:min-w-0 lg:flex-1 lg:shrink">
-          <ScreenShare screens={screens} />
-
-          <div className="flex justify-center pt-4">
-            <CallControls
-              micOn={state.micOn}
-              cameraOn={state.localCamera !== null}
-              sharing={state.localScreen !== null}
-              onToggleMic={() => client.toggleMic()}
-              onToggleCamera={() => client.toggleCamera()}
-              onToggleScreen={() => client.toggleScreen()}
-              onLeave={() => navigate("/")}
-            />
+        {state.notice && (
+          <div className="flex items-center justify-center gap-2 bg-tile px-4 py-2 text-sm" role="status">
+            <span>{state.notice}</span>
+            <button
+              className="cursor-pointer rounded p-1 hover:bg-slate-700"
+              onClick={() => client.dismissNotice()}
+              aria-label="Fechar aviso"
+            >
+              <X size={16} />
+            </button>
           </div>
-        </section>
+        )}
 
-        <aside className="shrink-0 border-t border-slate-800 p-4 lg:w-72 lg:overflow-y-auto lg:border-t-0 lg:border-l">
-          <ParticipantList
-            participants={state.participants}
-            selfId={state.selfId}
-            getCameraStream={getCameraStream}
-            onKick={(participantId) => client.kick(participantId)}
-          />
-        </aside>
+        {audioBloqueado && (
+          <button
+            className="cursor-pointer bg-blue-500 px-4 py-2 text-sm hover:bg-blue-600"
+            onClick={handleAtivarAudio}
+          >
+            O navegador bloqueou o som da chamada. Clique para ativar.
+          </button>
+        )}
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+          <section className="flex shrink-0 flex-col p-4 lg:min-w-0 lg:flex-1 lg:shrink">
+            <CallStage
+              participants={state.participants}
+              selfId={state.selfId}
+              speakingIds={state.speakingIds}
+              screens={screens}
+              getCameraStream={getCameraStream}
+            />
+
+            {preferences.pushToTalk && state.micOn && (
+              <p className={`pt-3 text-center text-xs ${state.pushToTalkPressed ? "text-speaking" : "text-slate-400"}`}>
+                {state.pushToTalkPressed
+                  ? "Transmitindo..."
+                  : `Segure ${keyLabel(preferences.pushToTalkKey)} para falar`}
+              </p>
+            )}
+
+            <div className="flex justify-center pt-4">
+              <CallControls
+                micOn={state.micOn}
+                deafened={state.deafened}
+                cameraOn={state.localCamera !== null}
+                sharing={state.localScreen !== null}
+                onToggleMic={() => client.toggleMic()}
+                onToggleDeafen={() => client.toggleDeafen()}
+                onToggleCamera={() => client.toggleCamera()}
+                onToggleScreen={() =>
+                  state.localScreen ? client.stopScreen() : setDialogo("screen")
+                }
+                onOpenSettings={() => setDialogo("settings")}
+                onLeave={() => navigate("/")}
+              />
+            </div>
+          </section>
+
+          <aside className="shrink-0 border-t border-black/30 bg-sidebar p-2 lg:w-56 lg:overflow-y-auto lg:border-t-0">
+            <ParticipantList
+              participants={state.participants}
+              selfId={state.selfId}
+              speakingIds={state.speakingIds}
+              volumes={state.volumes}
+              onVolumeChange={(participantId, volume) => client.setVolume(participantId, volume)}
+              onKick={(participantId) => client.kick(participantId)}
+            />
+          </aside>
+        </div>
       </div>
+
+      {dialogo === "settings" && (
+        <SettingsDialog
+          client={client}
+          preferences={preferences}
+          onClose={() => setDialogo(null)}
+        />
+      )}
+
+      {dialogo === "screen" && (
+        <ScreenShareDialog
+          screenResolution={preferences.screenResolution}
+          screenFps={preferences.screenFps}
+          onClose={() => setDialogo(null)}
+          onConfirm={(qualidade) => {
+            client.updatePreferences(qualidade);
+            client.startScreen();
+            setDialogo(null);
+          }}
+        />
+      )}
 
       {Object.entries(state.remoteStreams).flatMap(([participantId, streams]) =>
         streams.map((stream) => (
           <RemoteAudio
             key={`${participantId}-${stream.id}`}
             stream={stream}
+            volume={state.volumes[participantId] ?? 1}
+            muted={state.deafened}
+            speakerId={preferences.speakerId}
             onBlocked={handleAudioBloqueado}
           />
         ))

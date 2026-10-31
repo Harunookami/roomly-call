@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Preferences } from "../../services/preferences";
+import { keyLabel, type Preferences } from "../../services/preferences";
 import type { RoomClient } from "../../services/roomClient";
 import { Dialog } from "./Dialog";
 
@@ -17,27 +17,19 @@ type SeletorProps = {
     onChange: (id: string) => void;
 }
 
-// KeyV vira "V" e Digit1 vira "1"; as demais teclas mantêm o nome do navegador.
-export function nomeDaTecla(codigo: string) {
-    if (codigo === "Space") {
-        return "Espaço";
-    }
-
-    return codigo.replace(/^(Key|Digit)/, "");
-}
-
 function Seletor({ rotulo, dispositivos, valor, onChange }: SeletorProps) {
     return (
         <label className="mb-3 flex flex-col gap-1 text-sm text-slate-300">
             {rotulo}
             <select
                 className="h-10 rounded-lg border border-slate-600 bg-rail px-2 text-white outline-none focus:ring-2 focus:ring-blue-500"
+                aria-label={rotulo}
                 value={dispositivos.some((d) => d.deviceId === valor) ? valor : ""}
                 onChange={(event) => onChange(event.target.value)}
             >
                 <option value="">Padrão do sistema</option>
                 {dispositivos
-                    .filter((d) => d.deviceId && d.deviceId !== "default")
+                    .filter((d) => d.deviceId && !["default", "communications"].includes(d.deviceId))
                     .map((d, index) => (
                         <option key={d.deviceId} value={d.deviceId}>
                             {d.label || `${rotulo} ${index + 1}`}
@@ -137,7 +129,7 @@ export function SettingsDialog({ client, preferences, onClose }: SettingsDialogP
                     >
                         {capturandoTecla
                             ? "Pressione uma tecla..."
-                            : `Tecla: ${nomeDaTecla(preferences.pushToTalkKey)}`}
+                            : `Tecla: ${keyLabel(preferences.pushToTalkKey)}`}
                     </button>
                     <p className="mt-1 text-xs text-slate-400">
                         Funciona apenas com esta aba em foco.

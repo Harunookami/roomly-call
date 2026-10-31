@@ -1,7 +1,7 @@
 import { getAudioContext } from "./audioContext";
 
 const CHECK_INTERVAL_MS = 100;
-const SPEAKING_THRESHOLD = 0.02;
+const SPEAKING_THRESHOLD = 0.015;
 // Mantém o indicador aceso nas pausas curtas entre as palavras.
 const HOLD_MS = 400;
 
@@ -58,7 +58,7 @@ export class SpeakingDetector {
     const source = context.createMediaStreamSource(new MediaStream([track]));
     const analyser = context.createAnalyser();
 
-    analyser.fftSize = 1024;
+    analyser.fftSize = 2048;
     source.connect(analyser);
 
     return {

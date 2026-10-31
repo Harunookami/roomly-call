@@ -40,7 +40,10 @@ O projeto também tem como objetivo estudar conceitos avançados de desenvolvime
 - [x] Entrada por código ou link, até 8 pessoas por sala;
 - [x] Chamadas de áudio e vídeo com WebRTC;
 - [x] Compartilhamento de tela, com áudio quando o navegador permite;
-- [x] Controle de microfone e câmera;
+- [x] Controle de microfone e câmera, com escolha de dispositivos;
+- [x] Indicador de quem está falando e sons de entrada, saída e mudo;
+- [x] Ensurdecer, volume individual e apertar para falar;
+- [x] Escolha de resolução e taxa de quadros da tela;
 - [x] Lista de participantes, com remoção feita pelo anfitrião;
 - [x] Reconexão automática sem perder o lugar na sala;
 - [x] Suporte a STUN/TURN por configuração;
@@ -85,10 +88,13 @@ server
 src
 ├── components
 │   ├── CallControls
+│   ├── Dialogs
 │   ├── Header
 │   ├── Media
 │   ├── Participants
-│   └── ScreenShare
+│   ├── ScreenShare
+│   ├── Sidebar
+│   └── Stage
 │
 ├── hooks
 │   └── useRoom.ts
@@ -102,8 +108,12 @@ src
 │   └── index.tsx
 │
 ├── services
+│   ├── audioContext.ts
+│   ├── preferences.ts # Dispositivos e opções salvas no navegador
 │   ├── roomClient.ts  # Ciclo de vida da chamada
 │   ├── socket.ts      # Conexão com o servidor
+│   ├── sounds.ts      # Sons da chamada
+│   ├── speaking.ts    # Detecção de quem está falando
 │   ├── userName.ts
 │   └── webrtc.ts      # Conexões entre participantes
 │
